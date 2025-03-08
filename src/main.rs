@@ -164,7 +164,7 @@ impl Tasks {
                 .open(&filename)
         })?;
         let reader = BufReader::new(file);
-        let mut rdr = ReaderBuilder::new().has_headers(false).from_reader(reader);
+        let mut rdr = ReaderBuilder::new().has_headers(true).from_reader(reader);
         let mut tasks = vec![];
         for r in rdr.deserialize() {
             tasks.push(r?)
@@ -220,7 +220,7 @@ impl Tasks {
 
     fn save(&self) -> io::Result<()> {
         let buf = {
-            let mut wtr = WriterBuilder::new().has_headers(false).from_writer(vec![]);
+            let mut wtr = WriterBuilder::new().has_headers(true).from_writer(vec![]);
             for record in &self.inner {
                 wtr.serialize(record)?;
             }
@@ -243,11 +243,11 @@ impl Tasks {
         self.inner.iter_mut().find(|t| t.id == id)
     }
 
-    fn find(&self, name_or_id: &str) -> Vec<&Task> {
-        self.find_inner(name_or_id, false)
+    fn find(&self, name_or_id: &str, show_dropped: bool) -> Vec<&Task> {
+        self.find_inner(name_or_id, show_dropped)
     }
 
-    fn find_inner(&self, name_or_id: &str, even_deleted: bool) -> Vec<&Task> {
+    fn find_inner(&self, name_or_id: &str, show_dropped: bool) -> Vec<&Task> {
         let mut candidates = vec![];
         if let Ok(id) = name_or_id.parse::<usize>() {
             if let Some(task) = self.iter().find(|t| t.id == id) {
@@ -264,15 +264,19 @@ impl Tasks {
             }
         }
 
-        if !even_deleted {
+        if !show_dropped {
             candidates.retain(|t| t.status != DROPPED_STATUS)
         }
         candidates.dedup_by(|t, t2| t.id == t2.id);
         candidates
     }
 
-    fn select_interactive(&self, needle: &str) -> Option<usize> {
-        let ids: Vec<_> = self.find(needle).iter().map(|t| t.id).collect();
+    fn select_interactive(&self, needle: &str, show_dropped: bool) -> Option<usize> {
+        let ids: Vec<_> = self
+            .find(needle, show_dropped)
+            .iter()
+            .map(|t| t.id)
+            .collect();
         match ids.as_slice() {
             [] => None,
             [id] => Some(*id),
@@ -323,7 +327,7 @@ fn main() -> io::Result<()> {
             let task = task.join(" ");
             let mut tasks = Tasks::load_default()?;
             match tasks
-                .select_interactive(&task)
+                .select_interactive(&task, false)
                 .and_then(|id| tasks.set_done(id))
             {
                 None => println!("Задача не найдена"),
@@ -335,7 +339,7 @@ fn main() -> io::Result<()> {
             let task = task.join(" ");
             let mut tasks = Tasks::load_default()?;
             match tasks
-                .select_interactive(&task)
+                .select_interactive(&task, false)
                 .and_then(|id| tasks.set_todo(id))
             {
                 None => println!("Задача не найдена"),
@@ -347,7 +351,7 @@ fn main() -> io::Result<()> {
             let task = task.join(" ");
             let mut tasks = Tasks::load_default()?;
             match tasks
-                .select_interactive(&task)
+                .select_interactive(&task, false)
                 .and_then(|id| tasks.set_dropped(id))
             {
                 None => println!("Задача не найдена"),
@@ -366,7 +370,7 @@ fn main() -> io::Result<()> {
         Command::Find { task } => {
             let task = task.join(" ");
             let tasks = Tasks::load_default()?;
-            let matched = tasks.find(&task);
+            let matched = tasks.find(&task, false);
             print_tasks(matched.into_iter(), None)
         }
         Command::Detail { task } => {
@@ -374,7 +378,7 @@ fn main() -> io::Result<()> {
             let tasks = Tasks::load_default()?;
 
             match tasks
-                .select_interactive(&task)
+                .select_interactive(&task, true)
                 .and_then(|id| tasks.find_id(id))
             {
                 None => println!("Задача не найдена"),
@@ -398,7 +402,7 @@ fn main() -> io::Result<()> {
             let mut tasks = Tasks::load_default()?;
 
             match tasks
-                .select_interactive(&task)
+                .select_interactive(&task, false)
                 .and_then(|id| tasks.find_id_mut(id))
             {
                 None => println!("Задача не найдена"),
