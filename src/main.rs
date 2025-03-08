@@ -3,12 +3,13 @@ use csv::{ReaderBuilder, WriterBuilder};
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::collections::{BTreeSet, HashMap};
+#[allow(deprecated)]
 use std::env::home_dir;
-use std::fs::File;
-use std::io;
-use std::io::{BufReader, stdin};
+use std::fs::{File, OpenOptions};
+use std::io::{BufReader, Write, stdin};
 use std::path::PathBuf;
 use std::time::SystemTime;
+use std::{fs, io};
 use strsim::jaro_winkler;
 
 fn read_line() -> io::Result<String> {
@@ -121,6 +122,7 @@ fn is_candidate(needle: &str, needle_words: &BTreeSet<&str>, task: &Task) -> boo
 
 impl Tasks {
     fn load_default() -> io::Result<Self> {
+        #[allow(deprecated)]
         let mut file = home_dir().expect("cannot determine home directory");
         file.push(".todo");
         file.push("tasks.csv");
@@ -128,8 +130,16 @@ impl Tasks {
     }
 
     fn load(filename: PathBuf) -> io::Result<Self> {
-        // FIXME: descriptor errors
-        let file = File::open(&filename).or_else(|_| File::create(&filename))?;
+        if let Some(dir) = filename.parent() {
+            fs::create_dir_all(dir)?
+        }
+        let file = File::open(&filename).or_else(|_| {
+            OpenOptions::new()
+                .create(true)
+                .write(true)
+                .read(true)
+                .open(&filename)
+        })?;
         let reader = BufReader::new(file);
         let mut rdr = ReaderBuilder::new().has_headers(false).from_reader(reader);
         let mut tasks = vec![];
@@ -187,13 +197,19 @@ impl Tasks {
     }
 
     fn save(&self) -> io::Result<()> {
-        let file = File::create(&self.filename)?;
-        let mut wtr = WriterBuilder::new().has_headers(false).from_writer(file);
-        for record in &self.inner {
-            wtr.serialize(record)?;
+        let buf = {
+            let mut wtr = WriterBuilder::new().has_headers(false).from_writer(vec![]);
+            for record in &self.inner {
+                wtr.serialize(record)?;
+            }
+            wtr.into_inner()
+                .map_err(|_| io::Error::other("cannot flush the buffer"))?
+        };
+        if let Some(dir) = self.filename.parent() {
+            fs::create_dir_all(dir)?
         }
-
-        wtr.flush()?;
+        let mut file = File::create(&self.filename)?;
+        file.write_all(&buf)?;
         Ok(())
     }
 
