@@ -1,3 +1,4 @@
+use chrono::{Local, Utc};
 use clap::{Parser, Subcommand};
 use csv::{ReaderBuilder, WriterBuilder};
 use serde::{Deserialize, Serialize};
@@ -8,9 +9,12 @@ use std::env::home_dir;
 use std::fs::{File, OpenOptions};
 use std::io::{BufReader, Write, stdin};
 use std::path::PathBuf;
-use std::time::SystemTime;
 use std::{fs, io};
 use strsim::jaro_winkler;
+
+const TODO_STATUS: &str = "todo";
+const DONE_STATUS: &str = "done";
+const DROPPED_STATUS: &str = "drop";
 
 fn read_line() -> io::Result<String> {
     let mut buf = String::new();
@@ -49,6 +53,9 @@ enum Command {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         task: Vec<String>,
     },
+    Detail {
+        task: Vec<String>,
+    },
     Comment {
         task: String,
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
@@ -63,10 +70,25 @@ struct Task {
     id: usize,
     status: String,
     title: String,
-    // TODO: chrono
-    created_at: SystemTime,
-    updated_at: SystemTime,
+    created_at: chrono::DateTime<Utc>,
+    updated_at: chrono::DateTime<Utc>,
     comments: String,
+}
+
+impl Task {
+    fn add_comment(&mut self, comment: &str) {
+        if !self.comments.is_empty() {
+            self.comments.push_str("\n\n");
+        }
+        self.comments.push_str(comment);
+        self.updated_at = Utc::now();
+    }
+
+    fn set_status(&mut self, status: String) -> Option<&Task> {
+        self.status = status;
+        self.updated_at = Utc::now();
+        Some(self)
+    }
 }
 
 struct Tasks {
@@ -136,6 +158,7 @@ impl Tasks {
         let file = File::open(&filename).or_else(|_| {
             OpenOptions::new()
                 .create(true)
+                .truncate(false)
                 .write(true)
                 .read(true)
                 .open(&filename)
@@ -162,8 +185,7 @@ impl Tasks {
     fn set_status(&mut self, id: usize, status: String) -> Option<&Task> {
         let idx = self.find_idx(id)?;
         let task = self.inner.get_mut(idx)?;
-        task.status = status;
-        Some(task)
+        task.set_status(status)
     }
 
     fn set_done(&mut self, id: usize) -> Option<&Task> {
@@ -189,8 +211,8 @@ impl Tasks {
             title,
             comments,
             status: TODO_STATUS.into(),
-            created_at: SystemTime::now(),
-            updated_at: SystemTime::now(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
         };
         self.inner.push(task);
         self.inner.iter().last().unwrap()
@@ -215,6 +237,10 @@ impl Tasks {
 
     fn find_id(&self, id: usize) -> Option<&Task> {
         self.inner.iter().find(|t| t.id == id)
+    }
+
+    fn find_id_mut(&mut self, id: usize) -> Option<&mut Task> {
+        self.inner.iter_mut().find(|t| t.id == id)
     }
 
     fn find(&self, name_or_id: &str) -> Vec<&Task> {
@@ -264,10 +290,6 @@ impl Tasks {
         self.inner.iter()
     }
 }
-
-const TODO_STATUS: &str = "todo";
-const DONE_STATUS: &str = "done";
-const DROPPED_STATUS: &str = "drop";
 
 fn print_tasks<'a>(tasks: impl Iterator<Item = &'a Task> + 'a, only_status: Option<String>) {
     let mut by_status: HashMap<String, Vec<&Task>> = HashMap::new();
@@ -347,7 +369,44 @@ fn main() -> io::Result<()> {
             let matched = tasks.find(&task);
             print_tasks(matched.into_iter(), None)
         }
-        _ => todo!(),
+        Command::Detail { task } => {
+            let task = task.join(" ");
+            let tasks = Tasks::load_default()?;
+
+            match tasks
+                .select_interactive(&task)
+                .and_then(|id| tasks.find_id(id))
+            {
+                None => println!("Задача не найдена"),
+                Some(task) => {
+                    println!("Title: {}", task.title);
+                    println!("ID: {}", task.id);
+                    println!("Status: {}", task.status);
+                    if !task.comments.is_empty() {
+                        println!("----- comments -----");
+                        for comment in task.comments.lines() {
+                            println!("{comment}");
+                        }
+                        println!("--------------------");
+                    }
+                    println!("created at: {:?}", task.created_at.with_timezone(&Local));
+                    println!("updated at: {:?}", task.updated_at.with_timezone(&Local));
+                }
+            }
+        }
+        Command::Comment { task, comment } => {
+            let mut tasks = Tasks::load_default()?;
+
+            match tasks
+                .select_interactive(&task)
+                .and_then(|id| tasks.find_id_mut(id))
+            {
+                None => println!("Задача не найдена"),
+                Some(task) => task.add_comment(&comment.join(" ")),
+            }
+
+            tasks.save()?
+        }
     }
     Ok(())
 }
