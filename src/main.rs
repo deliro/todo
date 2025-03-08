@@ -244,10 +244,10 @@ impl Tasks {
     }
 
     fn find(&self, name_or_id: &str, show_dropped: bool) -> Vec<&Task> {
-        self.find_inner(name_or_id, show_dropped)
-    }
-
-    fn find_inner(&self, name_or_id: &str, show_dropped: bool) -> Vec<&Task> {
+        let name_or_id = name_or_id.trim();
+        if name_or_id.is_empty() {
+            return vec![];
+        }
         let mut candidates = vec![];
         if let Ok(id) = name_or_id.parse::<usize>() {
             if let Some(task) = self.iter().find(|t| t.id == id) {
