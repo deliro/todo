@@ -250,28 +250,17 @@ impl Tasks {
     }
 
     fn select_interactive(&self, needle: &str, show_dropped: bool) -> Option<usize> {
-        let ids: Vec<_> = self
-            .find(needle, show_dropped)
-            .iter()
-            .map(|t| t.id)
-            .collect();
-        match ids.as_slice() {
+        let candidates: Vec<_> = self.find(needle, show_dropped).into_iter().collect();
+        match candidates.as_slice() {
             [] => None,
-            [id] => Some(*id),
+            [one] => Some(one.id),
             many => {
                 println!("Select ID:");
-                let matched = self
-                    .iter()
-                    .filter(|t| many.contains(&t.id))
-                    .collect::<Vec<_>>();
-                let ids = matched.iter().map(|x| x.id).collect::<BTreeSet<_>>();
-                print_tasks(matched.into_iter(), None);
+                print_tasks(many.iter().map(|x| *x), None);
                 let id: usize = read_line().ok()?.parse().ok()?;
                 // Despite the fact this id may exist, we force user to choose only
                 // over the list we printed to prevent mistakes
-                self.find_id(id)
-                    .is_some_and(|task| ids.contains(&task.id))
-                    .then_some(id)
+                many.iter().any(|t| t.id == id).then_some(id)
             }
         }
     }
