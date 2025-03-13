@@ -47,6 +47,8 @@ enum Command {
     Detail { task: Vec<String> },
     /// Add a comment to a task
     Comment { task: Vec<String> },
+    /// Physically remove all dropped tasks
+    RemoveDropped,
     /// Create new task
     #[clap(external_subcommand)]
     External(Vec<String>),
@@ -121,29 +123,17 @@ struct Tasks {
     filename: PathBuf,
 }
 
-fn is_candidate(needle: &str, needle_words: &BTreeSet<&str>, task: &Task) -> bool {
-    debug_assert!(needle.to_lowercase() == needle);
-    debug_assert!(needle_words.iter().all(|w| w.to_lowercase() == *w));
+fn is_similar_words(needles: &BTreeSet<&str>, haystack: &BTreeSet<&str>) -> bool {
+    debug_assert!(needles.iter().all(|w| w.to_lowercase() == *w));
+    debug_assert!(haystack.iter().all(|w| w.to_lowercase() == *w));
 
-    let title = task.title.to_lowercase();
-    if needle == title {
-        return true;
-    }
-    if title.contains(needle) {
-        return true;
-    }
-    if needle_words.iter().all(|w| title.contains(w)) {
-        return true;
-    }
-
-    let title_words = title.split_whitespace().collect::<BTreeSet<&str>>();
-    let mut weights = vec![];
-    for needle_word in needle_words {
-        for title_word in &title_words {
+    let mut weights = Vec::with_capacity(needles.len() + haystack.len());
+    for needle_word in needles {
+        for haystack_word in haystack {
             weights.push((
-                jaro_winkler(needle_word, title_word),
+                jaro_winkler(needle_word, haystack_word),
                 needle_word,
-                title_word,
+                haystack_word,
             ))
         }
     }
@@ -155,14 +145,39 @@ fn is_candidate(needle: &str, needle_words: &BTreeSet<&str>, task: &Task) -> boo
     {
         return true;
     }
-    let sum: f64 = weights
-        .iter()
-        .take(needle_words.len())
-        .map(|(x, _, _)| x)
-        .sum();
-    let count = (needle_words.len().saturating_sub(1) + 1) as f64;
+    let sum: f64 = weights.iter().take(needles.len()).map(|(x, _, _)| x).sum();
+    let count = (needles.len().saturating_sub(1) + 1) as f64;
     if (sum / count) > 0.85 {
         return true;
+    }
+    false
+}
+
+fn is_candidate(needle: &str, needle_words: &BTreeSet<&str>, task: &Task) -> bool {
+    debug_assert!(needle.to_lowercase() == needle);
+    let title = task.title.to_lowercase();
+    if needle_words.iter().all(|w| title.contains(w)) {
+        return true;
+    }
+
+    if is_similar_words(
+        needle_words,
+        &title.split_whitespace().collect::<BTreeSet<&str>>(),
+    ) {
+        return true;
+    }
+
+    if !task.comments.is_empty() {
+        let comment = task.comments.to_lowercase();
+        if needle_words.iter().all(|w| comment.contains(w)) {
+            return true;
+        }
+        if is_similar_words(
+            needle_words,
+            &comment.split_whitespace().collect::<BTreeSet<&str>>(),
+        ) {
+            return true;
+        }
     }
     false
 }
@@ -223,6 +238,13 @@ impl Tasks {
 
     fn set_dropped(&mut self, id: usize) -> Option<&Task> {
         self.set_status(id, DROPPED_STATUS.into())
+    }
+
+    fn remove_dropped(&mut self) -> usize {
+        let orig_len = self.inner.len();
+        self.inner.retain(|t| t.status != DROPPED_STATUS);
+        let new_len = self.inner.len();
+        orig_len - new_len
     }
 
     fn next_id(&self) -> usize {
@@ -454,6 +476,20 @@ fn main() -> io::Result<()> {
                 }
             }
             tasks.save()?
+        }
+        Command::RemoveDropped => {
+            println!("Are you sure? [y/N]");
+            let confirmation = read_line()?.to_lowercase();
+            if ["y", "yes"].contains(&&*confirmation) {
+                let mut tasks = Tasks::load_default()?;
+                let removed_n = tasks.remove_dropped();
+                tasks.save()?;
+                if removed_n > 0 {
+                    println!("{removed_n} dropped tasks were removed")
+                } else {
+                    println!("Nothing to remove")
+                }
+            }
         }
     }
     Ok(())
