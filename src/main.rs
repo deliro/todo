@@ -396,7 +396,7 @@ fn main() -> io::Result<()> {
             let id = tasks.todo(title, "".into()).id;
             tasks.save()?;
             let task = tasks.find_id(id).unwrap();
-            println!("Task {} has been created", task);
+            println!("Task has been created: {}", task);
         }
         Command::Find { task } => {
             let task = task.join(" ");
@@ -448,7 +448,7 @@ fn main() -> io::Result<()> {
             {
                 None => print_not_found!(),
                 Some(task) => {
-                    println!("New name:");
+                    println!("New name for {}:", task);
                     let new_title = read_line()?;
                     task.change_title(new_title)
                 }
