@@ -12,6 +12,7 @@ use std::io::{BufReader, Write, stdin};
 use std::path::PathBuf;
 use std::{fmt, fs, io};
 use strsim::jaro_winkler;
+
 const TODO_STATUS: &str = "todo";
 const DONE_STATUS: &str = "done";
 const DROPPED_STATUS: &str = "drop";
@@ -20,6 +21,19 @@ fn read_line() -> io::Result<String> {
     let mut buf = String::new();
     stdin().read_line(&mut buf)?;
     Ok(buf.trim().to_string())
+}
+
+trait StringExt {
+    fn contains_all<T: AsRef<str>>(&self, i: impl IntoIterator<Item = T>) -> bool;
+}
+
+impl<T> StringExt for T
+where
+    T: AsRef<str>,
+{
+    fn contains_all<Item: AsRef<str>>(&self, i: impl IntoIterator<Item = Item>) -> bool {
+        i.into_iter().all(|x| self.as_ref().contains(x.as_ref()))
+    }
 }
 
 #[derive(Parser)]
@@ -117,6 +131,36 @@ impl Task {
     }
 }
 
+#[derive(Debug, Copy, Clone)]
+struct Idx(usize);
+
+impl From<usize> for Idx {
+    fn from(value: usize) -> Self {
+        Self(value)
+    }
+}
+
+impl From<Idx> for usize {
+    fn from(value: Idx) -> Self {
+        value.0
+    }
+}
+
+#[derive(Debug, Copy, Clone)]
+struct Loc {
+    idx: Idx,
+    id: usize,
+}
+
+impl Loc {
+    fn new<I: Into<Idx>>(idx: I, id: usize) -> Self {
+        Self {
+            idx: idx.into(),
+            id,
+        }
+    }
+}
+
 struct Tasks {
     inner: Vec<Task>,
     filename: PathBuf,
@@ -155,30 +199,22 @@ impl Tasks {
         })
     }
 
-    fn find_idx(&self, id: usize) -> Option<usize> {
-        self.inner
-            .iter()
-            .enumerate()
-            .find_map(|(idx, t)| (t.id == id).then_some(idx))
-    }
-
-    fn set_status(&mut self, id: usize, status: String) -> Option<&Task> {
-        let idx = self.find_idx(id)?;
-        let task = self.inner.get_mut(idx)?;
+    fn set_status_idx(&mut self, idx: Idx, status: String) -> Option<&Task> {
+        let task = self.find_idx_mut(idx)?;
         task.set_status(status);
         Some(task)
     }
 
-    fn set_done(&mut self, id: usize) -> Option<&Task> {
-        self.set_status(id, DONE_STATUS.into())
+    fn set_done_idx(&mut self, idx: Idx) -> Option<&Task> {
+        self.set_status_idx(idx, DONE_STATUS.into())
     }
 
-    fn set_todo(&mut self, id: usize) -> Option<&Task> {
-        self.set_status(id, TODO_STATUS.into())
+    fn set_todo_idx(&mut self, idx: Idx) -> Option<&Task> {
+        self.set_status_idx(idx, TODO_STATUS.into())
     }
 
-    fn set_dropped(&mut self, id: usize) -> Option<&Task> {
-        self.set_status(id, DROPPED_STATUS.into())
+    fn set_dropped_idx(&mut self, idx: Idx) -> Option<&Task> {
+        self.set_status_idx(idx, DROPPED_STATUS.into())
     }
 
     fn remove_dropped(&mut self) -> usize {
@@ -188,14 +224,16 @@ impl Tasks {
         orig_len - new_len
     }
 
-    fn next_id(&self) -> usize {
-        self.inner.iter().map(|t| t.id).max().unwrap_or(0) + 1
+    fn next_loc(&self) -> Loc {
+        let next_id = self.inner.iter().map(|t| t.id).max().unwrap_or(0) + 1;
+        let next_idx = self.inner.len();
+        Loc::new(next_idx, next_id)
     }
 
-    fn todo(&mut self, title: String, comments: String) -> &Task {
-        let id = self.next_id();
+    fn todo(&mut self, title: String, comments: String) -> Loc {
+        let loc = self.next_loc();
         let task = Task {
-            id,
+            id: loc.id,
             title,
             comments,
             status: TODO_STATUS.into(),
@@ -203,7 +241,7 @@ impl Tasks {
             updated_at: Utc::now(),
         };
         self.inner.push(task);
-        self.inner.iter().last().unwrap()
+        loc
     }
 
     fn save(&self) -> io::Result<()> {
@@ -223,44 +261,47 @@ impl Tasks {
         Ok(())
     }
 
-    fn find_id(&self, id: usize) -> Option<&Task> {
-        self.inner.iter().find(|t| t.id == id)
+    fn find_idx(&self, idx: Idx) -> Option<&Task> {
+        let i: usize = idx.into();
+        self.inner.get(i)
     }
 
-    fn find_id_mut(&mut self, id: usize) -> Option<&mut Task> {
-        self.inner.iter_mut().find(|t| t.id == id)
+    fn find_idx_mut(&mut self, idx: Idx) -> Option<&mut Task> {
+        let i: usize = idx.into();
+        self.inner.get_mut(i)
     }
 
-    fn find(&self, needle: &str, show_dropped: bool) -> Vec<&Task> {
+    fn find(&self, needle: &str, show_dropped: bool) -> Vec<(Loc, &Task)> {
         let mut candidates = vec![];
-        for task in self.iter() {
+        for (idx, task) in self.iter().enumerate() {
             match Candidate::check(needle, task) {
                 Candidate::ById if show_dropped || task.status != DROPPED_STATUS => {
-                    return vec![task];
+                    return vec![(Loc::new(idx, task.id), task)];
                 }
                 Candidate::No => {}
-                _ => candidates.push(task),
+                _ => candidates.push((Loc::new(idx, task.id), task)),
             }
         }
 
         if !show_dropped {
-            candidates.retain(|t| t.status != DROPPED_STATUS);
+            candidates.retain(|(_, t)| t.status != DROPPED_STATUS);
         }
         candidates
     }
 
-    fn select_interactive(&self, needle: &str, show_dropped: bool) -> Option<usize> {
+    fn select_interactive(&self, needle: &str, show_dropped: bool) -> Option<Loc> {
         let candidates: Vec<_> = self.find(needle, show_dropped).into_iter().collect();
         match candidates.as_slice() {
             [] => None,
-            [one] => Some(one.id),
+            [one] => Some(one.0),
             many => {
                 println!("Select ID:");
-                print_tasks(many.iter().map(|x| *x), None);
+                print_tasks(many.iter().map(|(_, x)| *x), None);
                 let id: usize = read_line().ok()?.parse().ok()?;
                 // Despite the fact this id may exist, we force user to choose only
                 // over the list we printed to prevent mistakes
-                many.iter().any(|t| t.id == id).then_some(id)
+                many.iter()
+                    .find_map(|(loc, _)| if loc.id == id { Some(*loc) } else { None })
             }
         }
     }
@@ -346,7 +387,7 @@ impl Candidate {
 
         let needle_words = needle.split_whitespace().collect::<Vec<_>>();
         let title = task.title.to_lowercase();
-        if needle_words.iter().all(|w| title.contains(w)) {
+        if title.contains_all(&needle_words) {
             return Candidate::SubsetOfTitle;
         }
 
@@ -356,7 +397,7 @@ impl Candidate {
 
         if !task.comments.is_empty() {
             let comment = task.comments.to_lowercase();
-            if needle_words.iter().all(|w| comment.contains(w)) {
+            if comment.contains_all(&needle_words) {
                 return Candidate::SubsetOfComment;
             }
             if is_similar_words(
@@ -390,7 +431,7 @@ fn main() -> io::Result<()> {
             let mut tasks = Tasks::load_default()?;
             match tasks
                 .select_interactive(&task, false)
-                .and_then(|id| tasks.set_done(id))
+                .and_then(|loc| tasks.set_done_idx(loc.idx))
             {
                 None => print_not_found!(),
                 Some(t) => println!("Done: {t}"),
@@ -402,7 +443,7 @@ fn main() -> io::Result<()> {
             let mut tasks = Tasks::load_default()?;
             match tasks
                 .select_interactive(&task, false)
-                .and_then(|id| tasks.set_todo(id))
+                .and_then(|loc| tasks.set_todo_idx(loc.idx))
             {
                 None => print_not_found!(),
                 Some(t) => println!("TODO: {t}"),
@@ -414,7 +455,7 @@ fn main() -> io::Result<()> {
             let mut tasks = Tasks::load_default()?;
             match tasks
                 .select_interactive(&task, false)
-                .and_then(|id| tasks.set_dropped(id))
+                .and_then(|loc| tasks.set_dropped_idx(loc.idx))
             {
                 None => print_not_found!(),
                 Some(t) => println!("Dropped: {t}"),
@@ -424,16 +465,16 @@ fn main() -> io::Result<()> {
         Command::External(args) => {
             let mut tasks = Tasks::load_default()?;
             let title = args.join(" ");
-            let id = tasks.todo(title, String::new()).id;
+            let loc = tasks.todo(title, String::new());
             tasks.save()?;
-            let task = tasks.find_id(id).unwrap();
+            let task = tasks.find_idx(loc.idx).unwrap();
             println!("Task has been created: {task}");
         }
         Command::Find { task } => {
             let task = task.join(" ");
             let tasks = Tasks::load_default()?;
-            let matched = tasks.find(&task, false);
-            print_tasks(matched.into_iter(), None);
+            let matched = tasks.find(&task, false).into_iter().map(|(_, t)| t);
+            print_tasks(matched, None);
         }
         Command::Detail { task } => {
             let task = task.join(" ");
@@ -441,7 +482,7 @@ fn main() -> io::Result<()> {
 
             match tasks
                 .select_interactive(&task, true)
-                .and_then(|id| tasks.find_id(id))
+                .and_then(|loc| tasks.find_idx(loc.idx))
             {
                 None => print_not_found!(),
                 Some(task) => {
@@ -456,7 +497,7 @@ fn main() -> io::Result<()> {
 
             match tasks
                 .select_interactive(&task, false)
-                .and_then(|id| tasks.find_id_mut(id))
+                .and_then(|loc| tasks.find_idx_mut(loc.idx))
             {
                 None => print_not_found!(),
                 Some(task) => {
@@ -475,7 +516,7 @@ fn main() -> io::Result<()> {
             let mut tasks = Tasks::load_default()?;
             match tasks
                 .select_interactive(&task, false)
-                .and_then(|id| tasks.find_id_mut(id))
+                .and_then(|loc| tasks.find_idx_mut(loc.idx))
             {
                 None => print_not_found!(),
                 Some(task) => {
