@@ -6,12 +6,12 @@ use std::cmp::Ordering;
 use std::collections::{BTreeSet, HashMap};
 #[allow(deprecated)]
 use std::env::home_dir;
+use std::fmt::{Display, Formatter};
 use std::fs::{File, OpenOptions};
 use std::io::{BufReader, Write, stdin};
 use std::path::PathBuf;
-use std::{fs, io};
+use std::{fmt, fs, io};
 use strsim::jaro_winkler;
-
 const TODO_STATUS: &str = "todo";
 const DONE_STATUS: &str = "done";
 const DROPPED_STATUS: &str = "drop";
@@ -31,36 +31,23 @@ struct TodoCli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Список задач
-    List {
-        status: Option<String>,
-    },
-    /// Изменить статус задачи
-    Todo {
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        task: Vec<String>,
-    },
-    /// Отметить задачу как выполненную
-    Done {
-        task: Vec<String>,
-    },
-
-    Drop {
-        task: Vec<String>,
-    },
-
-    Find {
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        task: Vec<String>,
-    },
-    Detail {
-        task: Vec<String>,
-    },
-    Comment {
-        task: String,
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        comment: Vec<String>,
-    },
+    /// Print tasks list
+    List { status: Option<String> },
+    /// Change status to todo
+    Todo { task: Vec<String> },
+    /// Change status to done
+    Done { task: Vec<String> },
+    /// Remove a task (soft-delete)
+    Drop { task: Vec<String> },
+    /// Rename a task
+    Rename { task: Vec<String> },
+    /// Find tasks
+    Find { task: Vec<String> },
+    /// Show a task's details (comments)
+    Detail { task: Vec<String> },
+    /// Add a comment to a task
+    Comment { task: Vec<String> },
+    /// Create new task
     #[clap(external_subcommand)]
     External(Vec<String>),
 }
@@ -75,7 +62,45 @@ struct Task {
     comments: String,
 }
 
+impl Display for Task {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{}. {}", self.id, self.title)
+    }
+}
+
 impl Task {
+    fn details(&self) -> Result<String, fmt::Error> {
+        use std::fmt::Write;
+
+        let mut buf = String::with_capacity(128);
+        writeln!(buf, "Title: {}", self.title)?;
+        writeln!(buf, "ID: {}", self.id)?;
+        writeln!(buf, "Status: {}", self.status)?;
+        if !self.comments.is_empty() {
+            writeln!(buf, "----- comments -----")?;
+            for comment in self.comments.lines() {
+                writeln!(buf, "{comment}")?;
+            }
+            writeln!(buf, "--------------------")?;
+        }
+        writeln!(
+            buf,
+            "created at: {:?}",
+            self.created_at.with_timezone(&Local)
+        )?;
+        write!(
+            buf,
+            "updated at: {:?}",
+            self.updated_at.with_timezone(&Local)
+        )?;
+        Ok(buf)
+    }
+
+    fn change_title(&mut self, new_title: String) {
+        self.title = new_title;
+        self.updated_at = Utc::now();
+    }
+
     fn add_comment(&mut self, comment: &str) {
         if !self.comments.is_empty() {
             self.comments.push_str("\n\n");
@@ -281,7 +306,7 @@ impl Tasks {
             [] => None,
             [id] => Some(*id),
             many => {
-                println!("Укажите ID:");
+                println!("Select ID:");
                 let matched = self.iter().filter(|t| many.contains(&t.id));
                 print_tasks(matched, None);
                 let id: usize = read_line().ok()?.parse().ok()?;
@@ -310,10 +335,16 @@ fn print_tasks<'a>(tasks: impl Iterator<Item = &'a Task> + 'a, only_status: Opti
         if let Some(status_tasks) = by_status.get(&status) {
             println!("[{status}]:");
             for task in status_tasks {
-                println!("{}. {}", task.id, task.title)
+                println!("{}", task)
             }
         }
     }
+}
+
+macro_rules! print_not_found {
+    () => {
+        println!("Not found")
+    };
 }
 
 fn main() -> io::Result<()> {
@@ -330,8 +361,8 @@ fn main() -> io::Result<()> {
                 .select_interactive(&task, false)
                 .and_then(|id| tasks.set_done(id))
             {
-                None => println!("Задача не найдена"),
-                Some(t) => println!("Задача готова: {}. {}", t.id, t.title),
+                None => print_not_found!(),
+                Some(t) => println!("Done: {}. {}", t.id, t.title),
             }
             tasks.save()?;
         }
@@ -342,8 +373,8 @@ fn main() -> io::Result<()> {
                 .select_interactive(&task, false)
                 .and_then(|id| tasks.set_todo(id))
             {
-                None => println!("Задача не найдена"),
-                Some(t) => println!("Задача в TODO: {}. {}", t.id, t.title),
+                None => print_not_found!(),
+                Some(t) => println!("TODO: {}", t),
             }
             tasks.save()?;
         }
@@ -354,8 +385,8 @@ fn main() -> io::Result<()> {
                 .select_interactive(&task, false)
                 .and_then(|id| tasks.set_dropped(id))
             {
-                None => println!("Задача не найдена"),
-                Some(t) => println!("Задача удалена: {}. {}", t.id, t.title),
+                None => print_not_found!(),
+                Some(t) => println!("Dropped: {}", t),
             }
             tasks.save()?;
         }
@@ -365,7 +396,7 @@ fn main() -> io::Result<()> {
             let id = tasks.todo(title, "".into()).id;
             tasks.save()?;
             let task = tasks.find_id(id).unwrap();
-            println!("Задача #{} добавлена: {}", task.id, task.title);
+            println!("Task {} has been created", task);
         }
         Command::Find { task } => {
             let task = task.join(" ");
@@ -381,34 +412,45 @@ fn main() -> io::Result<()> {
                 .select_interactive(&task, true)
                 .and_then(|id| tasks.find_id(id))
             {
-                None => println!("Задача не найдена"),
+                None => print_not_found!(),
                 Some(task) => {
-                    println!("Title: {}", task.title);
-                    println!("ID: {}", task.id);
-                    println!("Status: {}", task.status);
-                    if !task.comments.is_empty() {
-                        println!("----- comments -----");
-                        for comment in task.comments.lines() {
-                            println!("{comment}");
-                        }
-                        println!("--------------------");
-                    }
-                    println!("created at: {:?}", task.created_at.with_timezone(&Local));
-                    println!("updated at: {:?}", task.updated_at.with_timezone(&Local));
+                    let details = task.details().unwrap();
+                    println!("{details}");
                 }
             }
         }
-        Command::Comment { task, comment } => {
+        Command::Comment { task } => {
+            let task = task.join(" ");
             let mut tasks = Tasks::load_default()?;
 
             match tasks
                 .select_interactive(&task, false)
                 .and_then(|id| tasks.find_id_mut(id))
             {
-                None => println!("Задача не найдена"),
-                Some(task) => task.add_comment(&comment.join(" ")),
+                None => print_not_found!(),
+                Some(task) => {
+                    println!("Comment for {}:", task);
+                    let comment = read_line()?;
+                    task.add_comment(&comment)
+                }
             }
 
+            tasks.save()?
+        }
+        Command::Rename { task } => {
+            let task = task.join(" ");
+            let mut tasks = Tasks::load_default()?;
+            match tasks
+                .select_interactive(&task, false)
+                .and_then(|id| tasks.find_id_mut(id))
+            {
+                None => print_not_found!(),
+                Some(task) => {
+                    println!("New name:");
+                    let new_title = read_line()?;
+                    task.change_title(new_title)
+                }
+            }
             tasks.save()?
         }
     }
