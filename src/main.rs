@@ -362,7 +362,7 @@ fn main() -> io::Result<()> {
                 .and_then(|id| tasks.set_done(id))
             {
                 None => print_not_found!(),
-                Some(t) => println!("Done: {}. {}", t.id, t.title),
+                Some(t) => println!("Done: {}", t),
             }
             tasks.save()?;
         }
@@ -431,7 +431,9 @@ fn main() -> io::Result<()> {
                 Some(task) => {
                     println!("Comment for {}:", task);
                     let comment = read_line()?;
-                    task.add_comment(&comment)
+                    if !comment.is_empty() {
+                        task.add_comment(&comment)
+                    }
                 }
             }
 
