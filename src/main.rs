@@ -3,7 +3,7 @@ use clap::{Parser, Subcommand};
 use csv::{ReaderBuilder, WriterBuilder};
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::HashMap;
 #[allow(deprecated)]
 use std::env::home_dir;
 use std::fmt::{Display, Formatter};
@@ -271,7 +271,7 @@ impl Tasks {
 }
 
 fn print_tasks<'a>(tasks: impl Iterator<Item = &'a Task> + 'a, only_status: Option<String>) {
-    let mut by_status: HashMap<String, Vec<&Task>> = HashMap::new();
+    let mut by_status: HashMap<_, Vec<_>> = HashMap::new();
     for task in tasks {
         by_status.entry(task.status.clone()).or_default().push(task);
     }
@@ -291,7 +291,7 @@ fn print_tasks<'a>(tasks: impl Iterator<Item = &'a Task> + 'a, only_status: Opti
     }
 }
 
-fn is_similar_words(needles: &BTreeSet<&str>, haystack: &BTreeSet<&str>) -> bool {
+fn is_similar_words(needles: &[&str], haystack: &[&str]) -> bool {
     debug_assert!(needles.iter().all(|w| w.to_lowercase() == *w));
     debug_assert!(haystack.iter().all(|w| w.to_lowercase() == *w));
 
@@ -344,16 +344,13 @@ impl Candidate {
             }
         }
 
-        let needle_words = needle.split_whitespace().collect::<BTreeSet<&str>>();
+        let needle_words = needle.split_whitespace().collect::<Vec<_>>();
         let title = task.title.to_lowercase();
         if needle_words.iter().all(|w| title.contains(w)) {
             return Candidate::SubsetOfTitle;
         }
 
-        if is_similar_words(
-            &needle_words,
-            &title.split_whitespace().collect::<BTreeSet<&str>>(),
-        ) {
+        if is_similar_words(&needle_words, &title.split_whitespace().collect::<Vec<_>>()) {
             return Candidate::SimilarTitle;
         }
 
@@ -364,7 +361,7 @@ impl Candidate {
             }
             if is_similar_words(
                 &needle_words,
-                &comment.split_whitespace().collect::<BTreeSet<&str>>(),
+                &comment.split_whitespace().collect::<Vec<_>>(),
             ) {
                 return Candidate::SimilarComment;
             }
