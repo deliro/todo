@@ -131,7 +131,7 @@ impl Task {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 struct Idx(usize);
 
 impl From<usize> for Idx {
@@ -176,6 +176,7 @@ impl Tasks {
     }
 
     fn load(filename: PathBuf) -> io::Result<Self> {
+        log::debug!("loading tasks from {filename:?}");
         if let Some(dir) = filename.parent() {
             fs::create_dir_all(dir)?;
         }
@@ -225,6 +226,9 @@ impl Tasks {
     }
 
     fn next_loc(&self) -> Loc {
+        // We might have assumed the last vec element is the latest hence has the
+        // greatest ID, but the tasks file may be externally shuffled so seq scan
+        // is the only option.
         let next_id = self.inner.iter().map(|t| t.id).max().unwrap_or(0) + 1;
         let next_idx = self.inner.len();
         Loc::new(next_idx, next_id)
@@ -232,6 +236,7 @@ impl Tasks {
 
     fn todo(&mut self, title: String, comments: String) -> Loc {
         let loc = self.next_loc();
+        debug_assert_eq!(loc.idx, self.inner.len().into());
         let task = Task {
             id: loc.id,
             title,
@@ -246,6 +251,7 @@ impl Tasks {
 
     fn save(&self) -> io::Result<()> {
         let buf = {
+            log::debug!("writing tasks to buffer before saving to file");
             let mut wtr = WriterBuilder::new().has_headers(true).from_writer(vec![]);
             for record in &self.inner {
                 wtr.serialize(record)?;
@@ -258,6 +264,7 @@ impl Tasks {
         }
         let mut file = File::create(&self.filename)?;
         file.write_all(&buf)?;
+        log::debug!("file saved");
         Ok(())
     }
 
@@ -273,15 +280,20 @@ impl Tasks {
 
     fn find(&self, needle: &str, show_dropped: bool) -> Vec<(Loc, &Task)> {
         let mut candidates = vec![];
+        log::debug!("searching candidates for '{needle}'");
         for (idx, task) in self.iter().enumerate() {
-            match Candidate::check(needle, task) {
+            let candidate = Candidate::check(needle, task);
+            log::debug!("candidate '{task}' result is {candidate:?}");
+            match candidate {
                 Candidate::ById if show_dropped || task.status != DROPPED_STATUS => {
+                    log::debug!("searching stopped because ID was found");
                     return vec![(Loc::new(idx, task.id), task)];
                 }
                 Candidate::No => {}
                 _ => candidates.push((Loc::new(idx, task.id), task)),
             }
         }
+        log::debug!("searching complete");
 
         if !show_dropped {
             candidates.retain(|(_, t)| t.status != DROPPED_STATUS);
@@ -348,16 +360,19 @@ fn is_similar_words(needles: &[&str], haystack: &[&str]) -> bool {
     }
     weights.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Less));
     weights.reverse();
-    if weights
+    if let Some((sim, n, h)) = weights
         .iter()
-        .any(|(x, needle, title)| x >= &0.999 && (needle.len() >= 3 || title.len() >= 3))
+        .find(|(x, needle, title)| x >= &0.999 && (needle.len() >= 3 || title.len() >= 3))
     {
+        log::debug!("found 99.9%+ similar word: {sim} ({n} x {h})");
         return true;
     }
     let sum: f64 = weights.iter().take(needles.len()).map(|(x, _, _)| x).sum();
     #[allow(clippy::cast_precision_loss)]
     let count = (needles.len().saturating_sub(1) + 1) as f64;
-    if (sum / count) > 0.85 {
+    let avg = sum / count;
+    if avg > 0.85 {
+        log::debug!("average similarity is more than 85%: {avg}");
         return true;
     }
     false
@@ -387,6 +402,7 @@ impl Candidate {
 
         let needle_words = needle.split_whitespace().collect::<Vec<_>>();
         let title = task.title.to_lowercase();
+        log::debug!("checking title '{title}'");
         if title.contains_all(&needle_words) {
             return Candidate::SubsetOfTitle;
         }
@@ -397,6 +413,7 @@ impl Candidate {
 
         if !task.comments.is_empty() {
             let comment = task.comments.to_lowercase();
+            log::debug!("checking comment '{comment}'");
             if comment.contains_all(&needle_words) {
                 return Candidate::SubsetOfComment;
             }
@@ -420,6 +437,10 @@ macro_rules! print_not_found {
 
 #[allow(clippy::too_many_lines)]
 fn main() -> io::Result<()> {
+    env_logger::builder()
+        .parse_default_env()
+        .format_timestamp_micros()
+        .init();
     let cli = TodoCli::parse();
     match cli.command {
         Command::List { status } => {
