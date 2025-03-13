@@ -346,6 +346,7 @@ dependencies = [
  "chrono",
  "clap",
  "csv",
+ "log",
  "serde",
  "strsim",
 ]

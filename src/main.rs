@@ -111,75 +111,15 @@ impl Task {
         self.updated_at = Utc::now();
     }
 
-    fn set_status(&mut self, status: String) -> Option<&Task> {
+    fn set_status(&mut self, status: String) {
         self.status = status;
         self.updated_at = Utc::now();
-        Some(self)
     }
 }
 
 struct Tasks {
     inner: Vec<Task>,
     filename: PathBuf,
-}
-
-fn is_similar_words(needles: &BTreeSet<&str>, haystack: &BTreeSet<&str>) -> bool {
-    debug_assert!(needles.iter().all(|w| w.to_lowercase() == *w));
-    debug_assert!(haystack.iter().all(|w| w.to_lowercase() == *w));
-
-    let mut weights = Vec::with_capacity(needles.len() + haystack.len());
-    for needle_word in needles {
-        for haystack_word in haystack {
-            weights.push((
-                jaro_winkler(needle_word, haystack_word),
-                needle_word,
-                haystack_word,
-            ))
-        }
-    }
-    weights.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Less));
-    weights.reverse();
-    if weights
-        .iter()
-        .any(|(x, needle, title)| x >= &0.999 && (needle.len() >= 3 || title.len() >= 3))
-    {
-        return true;
-    }
-    let sum: f64 = weights.iter().take(needles.len()).map(|(x, _, _)| x).sum();
-    let count = (needles.len().saturating_sub(1) + 1) as f64;
-    if (sum / count) > 0.85 {
-        return true;
-    }
-    false
-}
-
-fn is_candidate(needle: &str, needle_words: &BTreeSet<&str>, task: &Task) -> bool {
-    debug_assert!(needle.to_lowercase() == needle);
-    let title = task.title.to_lowercase();
-    if needle_words.iter().all(|w| title.contains(w)) {
-        return true;
-    }
-
-    if is_similar_words(
-        needle_words,
-        &title.split_whitespace().collect::<BTreeSet<&str>>(),
-    ) {
-        return true;
-    }
-
-    if !task.comments.is_empty() {
-        let comment = task.comments.to_lowercase();
-        if needle_words.iter().all(|w| comment.contains(w)) {
-            return true;
-        }
-        if is_similar_words(
-            needle_words,
-            &comment.split_whitespace().collect::<BTreeSet<&str>>(),
-        ) {
-            return true;
-        }
-    }
-    false
 }
 
 impl Tasks {
@@ -193,7 +133,7 @@ impl Tasks {
 
     fn load(filename: PathBuf) -> io::Result<Self> {
         if let Some(dir) = filename.parent() {
-            fs::create_dir_all(dir)?
+            fs::create_dir_all(dir)?;
         }
         let file = File::open(&filename).or_else(|_| {
             OpenOptions::new()
@@ -207,7 +147,7 @@ impl Tasks {
         let mut rdr = ReaderBuilder::new().has_headers(true).from_reader(reader);
         let mut tasks = vec![];
         for r in rdr.deserialize() {
-            tasks.push(r?)
+            tasks.push(r?);
         }
         Ok(Self {
             inner: tasks,
@@ -225,7 +165,8 @@ impl Tasks {
     fn set_status(&mut self, id: usize, status: String) -> Option<&Task> {
         let idx = self.find_idx(id)?;
         let task = self.inner.get_mut(idx)?;
-        task.set_status(status)
+        task.set_status(status);
+        Some(task)
     }
 
     fn set_done(&mut self, id: usize) -> Option<&Task> {
@@ -275,7 +216,7 @@ impl Tasks {
                 .map_err(|_| io::Error::other("cannot flush the buffer"))?
         };
         if let Some(dir) = self.filename.parent() {
-            fs::create_dir_all(dir)?
+            fs::create_dir_all(dir)?;
         }
         let mut file = File::create(&self.filename)?;
         file.write_all(&buf)?;
@@ -290,31 +231,21 @@ impl Tasks {
         self.inner.iter_mut().find(|t| t.id == id)
     }
 
-    fn find(&self, name_or_id: &str, show_dropped: bool) -> Vec<&Task> {
-        let name_or_id = name_or_id.trim();
-        if name_or_id.is_empty() {
-            return vec![];
-        }
+    fn find(&self, needle: &str, show_dropped: bool) -> Vec<&Task> {
         let mut candidates = vec![];
-        if let Ok(id) = name_or_id.parse::<usize>() {
-            if let Some(task) = self.iter().find(|t| t.id == id) {
-                candidates.push(task)
-            }
-        }
-
-        let needle = name_or_id.to_lowercase();
-        let needle_words = needle.split_whitespace().collect::<BTreeSet<&str>>();
-
         for task in self.iter() {
-            if is_candidate(&needle, &needle_words, task) {
-                candidates.push(task)
+            match Candidate::check(needle, task) {
+                Candidate::ById if show_dropped || task.status != DROPPED_STATUS => {
+                    return vec![task];
+                }
+                Candidate::No => {}
+                _ => candidates.push(task),
             }
         }
 
         if !show_dropped {
-            candidates.retain(|t| t.status != DROPPED_STATUS)
+            candidates.retain(|t| t.status != DROPPED_STATUS);
         }
-        candidates.dedup_by(|t, t2| t.id == t2.id);
         candidates
     }
 
@@ -329,10 +260,18 @@ impl Tasks {
             [id] => Some(*id),
             many => {
                 println!("Select ID:");
-                let matched = self.iter().filter(|t| many.contains(&t.id));
-                print_tasks(matched, None);
+                let matched = self
+                    .iter()
+                    .filter(|t| many.contains(&t.id))
+                    .collect::<Vec<_>>();
+                let ids = matched.iter().map(|x| x.id).collect::<BTreeSet<_>>();
+                print_tasks(matched.into_iter(), None);
                 let id: usize = read_line().ok()?.parse().ok()?;
-                self.find_id(id).is_some().then_some(id)
+                // Despite the fact this id may exist, we force user to choose only
+                // over the list we printed to prevent mistakes
+                self.find_id(id)
+                    .is_some_and(|task| ids.contains(&task.id))
+                    .then_some(id)
             }
         }
     }
@@ -345,7 +284,7 @@ impl Tasks {
 fn print_tasks<'a>(tasks: impl Iterator<Item = &'a Task> + 'a, only_status: Option<String>) {
     let mut by_status: HashMap<String, Vec<&Task>> = HashMap::new();
     for task in tasks {
-        by_status.entry(task.status.clone()).or_default().push(task)
+        by_status.entry(task.status.clone()).or_default().push(task);
     }
 
     let statuses = match only_status {
@@ -357,9 +296,92 @@ fn print_tasks<'a>(tasks: impl Iterator<Item = &'a Task> + 'a, only_status: Opti
         if let Some(status_tasks) = by_status.get(&status) {
             println!("[{status}]:");
             for task in status_tasks {
-                println!("{}", task)
+                println!("{task}");
             }
         }
+    }
+}
+
+fn is_similar_words(needles: &BTreeSet<&str>, haystack: &BTreeSet<&str>) -> bool {
+    debug_assert!(needles.iter().all(|w| w.to_lowercase() == *w));
+    debug_assert!(haystack.iter().all(|w| w.to_lowercase() == *w));
+
+    let mut weights = Vec::with_capacity(needles.len() + haystack.len());
+    for needle_word in needles {
+        for haystack_word in haystack {
+            weights.push((
+                jaro_winkler(needle_word, haystack_word),
+                needle_word,
+                haystack_word,
+            ));
+        }
+    }
+    weights.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Less));
+    weights.reverse();
+    if weights
+        .iter()
+        .any(|(x, needle, title)| x >= &0.999 && (needle.len() >= 3 || title.len() >= 3))
+    {
+        return true;
+    }
+    let sum: f64 = weights.iter().take(needles.len()).map(|(x, _, _)| x).sum();
+    #[allow(clippy::cast_precision_loss)]
+    let count = (needles.len().saturating_sub(1) + 1) as f64;
+    if (sum / count) > 0.85 {
+        return true;
+    }
+    false
+}
+
+#[derive(Debug, Copy, Clone)]
+enum Candidate {
+    No,
+    ById,
+    SubsetOfTitle,
+    SimilarTitle,
+    SubsetOfComment,
+    SimilarComment,
+}
+
+impl Candidate {
+    fn check(needle: &str, task: &Task) -> Self {
+        let needle = needle.trim().to_lowercase();
+        if needle.is_empty() {
+            return Candidate::No;
+        }
+        if let Ok(id) = needle.parse::<usize>() {
+            if task.id == id {
+                return Candidate::ById;
+            }
+        }
+
+        let needle_words = needle.split_whitespace().collect::<BTreeSet<&str>>();
+        let title = task.title.to_lowercase();
+        if needle_words.iter().all(|w| title.contains(w)) {
+            return Candidate::SubsetOfTitle;
+        }
+
+        if is_similar_words(
+            &needle_words,
+            &title.split_whitespace().collect::<BTreeSet<&str>>(),
+        ) {
+            return Candidate::SimilarTitle;
+        }
+
+        if !task.comments.is_empty() {
+            let comment = task.comments.to_lowercase();
+            if needle_words.iter().all(|w| comment.contains(w)) {
+                return Candidate::SubsetOfComment;
+            }
+            if is_similar_words(
+                &needle_words,
+                &comment.split_whitespace().collect::<BTreeSet<&str>>(),
+            ) {
+                return Candidate::SimilarComment;
+            }
+        }
+
+        Candidate::No
     }
 }
 
@@ -369,6 +391,7 @@ macro_rules! print_not_found {
     };
 }
 
+#[allow(clippy::too_many_lines)]
 fn main() -> io::Result<()> {
     let cli = TodoCli::parse();
     match cli.command {
@@ -384,7 +407,7 @@ fn main() -> io::Result<()> {
                 .and_then(|id| tasks.set_done(id))
             {
                 None => print_not_found!(),
-                Some(t) => println!("Done: {}", t),
+                Some(t) => println!("Done: {t}"),
             }
             tasks.save()?;
         }
@@ -396,7 +419,7 @@ fn main() -> io::Result<()> {
                 .and_then(|id| tasks.set_todo(id))
             {
                 None => print_not_found!(),
-                Some(t) => println!("TODO: {}", t),
+                Some(t) => println!("TODO: {t}"),
             }
             tasks.save()?;
         }
@@ -408,23 +431,23 @@ fn main() -> io::Result<()> {
                 .and_then(|id| tasks.set_dropped(id))
             {
                 None => print_not_found!(),
-                Some(t) => println!("Dropped: {}", t),
+                Some(t) => println!("Dropped: {t}"),
             }
             tasks.save()?;
         }
         Command::External(args) => {
             let mut tasks = Tasks::load_default()?;
             let title = args.join(" ");
-            let id = tasks.todo(title, "".into()).id;
+            let id = tasks.todo(title, String::new()).id;
             tasks.save()?;
             let task = tasks.find_id(id).unwrap();
-            println!("Task has been created: {}", task);
+            println!("Task has been created: {task}");
         }
         Command::Find { task } => {
             let task = task.join(" ");
             let tasks = Tasks::load_default()?;
             let matched = tasks.find(&task, false);
-            print_tasks(matched.into_iter(), None)
+            print_tasks(matched.into_iter(), None);
         }
         Command::Detail { task } => {
             let task = task.join(" ");
@@ -451,15 +474,15 @@ fn main() -> io::Result<()> {
             {
                 None => print_not_found!(),
                 Some(task) => {
-                    println!("Comment for {}:", task);
+                    println!("Comment for {task}:");
                     let comment = read_line()?;
                     if !comment.is_empty() {
-                        task.add_comment(&comment)
+                        task.add_comment(&comment);
                     }
                 }
             }
 
-            tasks.save()?
+            tasks.save()?;
         }
         Command::Rename { task } => {
             let task = task.join(" ");
@@ -470,12 +493,12 @@ fn main() -> io::Result<()> {
             {
                 None => print_not_found!(),
                 Some(task) => {
-                    println!("New name for {}:", task);
+                    println!("New name for {task}:");
                     let new_title = read_line()?;
-                    task.change_title(new_title)
+                    task.change_title(new_title);
                 }
             }
-            tasks.save()?
+            tasks.save()?;
         }
         Command::RemoveDropped => {
             println!("Are you sure? [y/N]");
@@ -485,9 +508,9 @@ fn main() -> io::Result<()> {
                 let removed_n = tasks.remove_dropped();
                 tasks.save()?;
                 if removed_n > 0 {
-                    println!("{removed_n} dropped tasks were removed")
+                    println!("{removed_n} dropped tasks were removed");
                 } else {
-                    println!("Nothing to remove")
+                    println!("Nothing to remove");
                 }
             }
         }
