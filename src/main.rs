@@ -1,3 +1,4 @@
+use atty::Stream;
 use chrono::{Local, Utc};
 use clap::{Parser, Subcommand};
 use csv::{ReaderBuilder, WriterBuilder};
@@ -21,6 +22,21 @@ fn read_line() -> io::Result<String> {
     let mut buf = String::new();
     stdin().read_line(&mut buf)?;
     Ok(buf.trim().to_string())
+}
+
+fn read_lines() -> io::Result<String> {
+    if atty::is(Stream::Stdin) {
+        let mut buf = String::new();
+        stdin().read_line(&mut buf)?;
+        Ok(buf.trim().to_string())
+    } else {
+        let mut buf = String::new();
+        for line in stdin().lines() {
+            buf.push_str(&line?);
+            buf.push_str("\n");
+        }
+        Ok(buf.trim().to_string())
+    }
 }
 
 trait StringExt {
@@ -523,7 +539,7 @@ fn main() -> io::Result<()> {
                 None => print_not_found!(),
                 Some(task) => {
                     println!("Comment for {task}:");
-                    let comment = read_line()?;
+                    let comment = read_lines()?;
                     if !comment.is_empty() {
                         task.add_comment(&comment);
                     }
