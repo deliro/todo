@@ -82,6 +82,8 @@ enum Command {
     Comment { task: Vec<String> },
     /// Physically remove all dropped tasks
     RemoveDropped,
+    /// Prints the tasks file path
+    Where,
     /// Create new task
     #[clap(external_subcommand)]
     External(Vec<String>),
@@ -186,12 +188,15 @@ struct Tasks {
 }
 
 impl Tasks {
-    fn load_default() -> io::Result<Self> {
+    fn default_path() -> PathBuf {
         #[allow(deprecated)]
         let mut file = home_dir().expect("cannot determine home directory");
         file.push(".todo");
         file.push("tasks.csv");
-        Self::load(file)
+        file
+    }
+    fn load_default() -> io::Result<Self> {
+        Self::load(Self::default_path())
     }
 
     fn load(filename: PathBuf) -> io::Result<Self> {
@@ -579,6 +584,11 @@ fn main() -> io::Result<()> {
                 } else {
                     println!("Nothing to remove");
                 }
+            }
+        }
+        Command::Where => {
+            if let Some(path) = Tasks::default_path().to_str() {
+                println!("{path}")
             }
         }
     }
