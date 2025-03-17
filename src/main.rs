@@ -62,18 +62,21 @@ struct TodoCli {
 #[derive(Subcommand)]
 enum Command {
     /// Print tasks list
+    #[clap(visible_aliases = &["l", "ls"])]
     List { status: Option<String> },
     /// Change status to todo
     Todo { task: Vec<String> },
     /// Change status to done
     Done { task: Vec<String> },
     /// Remove a task (soft-delete)
+    #[clap(visible_aliases = &["remove", "delete", "rm"])]
     Drop { task: Vec<String> },
     /// Rename a task
     Rename { task: Vec<String> },
     /// Find tasks
     Find { task: Vec<String> },
     /// Show a task's details (comments)
+    #[clap(visible_alias = "d")]
     Detail { task: Vec<String> },
     /// Add a comment to a task
     Comment { task: Vec<String> },
