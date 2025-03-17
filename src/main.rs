@@ -482,7 +482,7 @@ fn main() -> io::Result<()> {
             let task = task.join(" ");
             let mut tasks = Tasks::load_default()?;
             match tasks
-                .select_interactive(&task, false)
+                .select_interactive(&task, true)
                 .and_then(|loc| tasks.set_todo_idx(loc.idx))
             {
                 None => print_not_found!(),
