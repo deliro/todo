@@ -74,6 +74,7 @@ enum Command {
     /// Rename a task
     Rename { task: Vec<String> },
     /// Find tasks
+    #[clap(visible_alias = "f")]
     Find { task: Vec<String> },
     /// Show a task's details (comments)
     #[clap(visible_alias = "d")]
