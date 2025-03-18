@@ -3,25 +3,22 @@ use chrono::{Local, Utc};
 use clap::{Parser, Subcommand};
 use csv::{ReaderBuilder, WriterBuilder};
 use serde::{Deserialize, Serialize};
-use std::cmp::Ordering;
+use std::cmp::{Ordering, PartialEq};
 use std::collections::HashMap;
 #[allow(deprecated)]
 use std::env::home_dir;
 use std::fmt::{Display, Formatter};
 use std::fs::{File, OpenOptions};
-use std::io::{BufRead, BufReader, Read, Write, stdin};
+use std::io::{stdin, BufRead, BufReader, Read, Write};
 use std::path::PathBuf;
+use std::str::FromStr;
 use std::{fmt, fs, io};
 use strsim::jaro_winkler;
-
-const TODO_STATUS: &str = "todo";
-const DONE_STATUS: &str = "done";
-const DROPPED_STATUS: &str = "drop";
 
 fn read_line() -> io::Result<String> {
     let mut buf = vec![];
     let mut handle = stdin().lock();
-    handle.read_until('\n' as u8, &mut buf)?;
+    handle.read_until(b'\n', &mut buf)?;
     Ok(String::from_utf8_lossy(&buf).trim().to_string())
 }
 
@@ -87,10 +84,51 @@ enum Command {
     External(Vec<String>),
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Hash, Eq)]
+#[serde(rename_all = "lowercase")]
+enum Status {
+    Todo,
+    Done,
+    Drop,
+}
+
+impl Status {
+    fn is_visible(&self) -> bool {
+        match self {
+            Status::Todo => true,
+            Status::Done => true,
+            Status::Drop => false,
+        }
+    }
+
+    fn list_visible() -> [Self; 2] {
+        [Self::Todo, Self::Done]
+    }
+}
+
+impl FromStr for Status {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "todo" => Ok(Status::Todo),
+            "done" => Ok(Status::Done),
+            "drop" => Ok(Status::Drop),
+            _ => Err(()),
+        }
+    }
+}
+
+impl Display for Status {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Task {
     id: usize,
-    status: String,
+    status: Status,
     title: String,
     created_at: chrono::DateTime<Utc>,
     updated_at: chrono::DateTime<Utc>,
@@ -102,6 +140,8 @@ impl Display for Task {
         write!(f, "{}. {}", self.id, self.title)
     }
 }
+
+
 
 impl Task {
     fn details(&self) -> Result<String, fmt::Error> {
@@ -144,7 +184,7 @@ impl Task {
         self.updated_at = Utc::now();
     }
 
-    fn set_status(&mut self, status: String) {
+    fn set_status(&mut self, status: Status) {
         self.status = status;
         self.updated_at = Utc::now();
     }
@@ -185,6 +225,7 @@ struct Tasks {
     filename: PathBuf,
 }
 
+
 impl Tasks {
     fn default_path() -> PathBuf {
         #[allow(deprecated)]
@@ -222,27 +263,27 @@ impl Tasks {
         })
     }
 
-    fn set_status_idx(&mut self, idx: Idx, status: String) -> Option<&Task> {
+    fn set_status_idx(&mut self, idx: Idx, status: Status) -> Option<&Task> {
         let task = self.find_idx_mut(idx)?;
         task.set_status(status);
         Some(task)
     }
 
     fn set_done_idx(&mut self, idx: Idx) -> Option<&Task> {
-        self.set_status_idx(idx, DONE_STATUS.into())
+        self.set_status_idx(idx, Status::Done)
     }
 
     fn set_todo_idx(&mut self, idx: Idx) -> Option<&Task> {
-        self.set_status_idx(idx, TODO_STATUS.into())
+        self.set_status_idx(idx, Status::Todo)
     }
 
     fn set_dropped_idx(&mut self, idx: Idx) -> Option<&Task> {
-        self.set_status_idx(idx, DROPPED_STATUS.into())
+        self.set_status_idx(idx, Status::Drop)
     }
 
     fn remove_dropped(&mut self) -> usize {
         let orig_len = self.inner.len();
-        self.inner.retain(|t| t.status != DROPPED_STATUS);
+        self.inner.retain(|t| t.status.is_visible());
         let new_len = self.inner.len();
         orig_len - new_len
     }
@@ -263,7 +304,7 @@ impl Tasks {
             id: loc.id,
             title,
             comments,
-            status: TODO_STATUS.into(),
+            status: Status::Todo,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
@@ -307,7 +348,7 @@ impl Tasks {
             let candidate = Candidate::check(needle, task);
             log::debug!("candidate '{task}' result is {candidate:?}");
             match candidate {
-                Candidate::ById if show_dropped || task.status != DROPPED_STATUS => {
+                Candidate::ById if show_dropped || task.status.is_visible() => {
                     log::debug!("searching stopped because ID was found");
                     return vec![(Loc::new(idx, task.id), task)];
                 }
@@ -318,7 +359,7 @@ impl Tasks {
         log::debug!("searching complete");
 
         if !show_dropped {
-            candidates.retain(|(_, t)| t.status != DROPPED_STATUS);
+            candidates.retain(|(_, t)| t.status.is_visible());
         }
         candidates
     }
@@ -330,7 +371,7 @@ impl Tasks {
             [one] => Some(one.0),
             many => {
                 println!("Select ID:");
-                print_tasks(many.iter().map(|(_, x)| *x), None);
+                print_visible_tasks(many.iter().map(|(_, x)| *x));
                 let id: usize = read_line().ok()?.parse().ok()?;
                 // Despite the fact this id may exist, we force user to choose only
                 // over the list we printed to prevent mistakes
@@ -345,23 +386,27 @@ impl Tasks {
     }
 }
 
-fn print_tasks<'a>(tasks: impl Iterator<Item = &'a Task> + 'a, only_status: Option<String>) {
+fn print_visible_tasks<'a>(tasks: impl Iterator<Item=&'a Task> + 'a) {
     let mut by_status: HashMap<_, Vec<_>> = HashMap::new();
     for task in tasks {
         by_status.entry(task.status.clone()).or_default().push(task);
     }
-
-    let statuses = match only_status {
-        Some(v) => vec![v],
-        None => vec![TODO_STATUS.into(), DONE_STATUS.into()],
-    };
-
-    for status in statuses {
+    for status in Status::list_visible() {
         if let Some(status_tasks) = by_status.get(&status) {
             println!("[{status}]:");
             for task in status_tasks {
                 println!("{task}");
             }
+        }
+    }
+}
+
+
+fn print_only_status_tasks<'a>(tasks: impl Iterator<Item=&'a Task> + 'a, only_status: Status) {
+    println!("[{only_status}]:");
+    for task in tasks {
+        if task.status == only_status {
+            println!("{task}");
         }
     }
 }
@@ -467,7 +512,16 @@ fn main() -> io::Result<()> {
     match cli.command {
         Command::List { status } => {
             let tasks = Tasks::load_default()?;
-            print_tasks(tasks.iter(), status);
+            match status {
+                None => { print_visible_tasks(tasks.iter()); }
+                Some(str_status) => {
+                    if let Ok(only_status) = Status::from_str(&str_status) {
+                        print_only_status_tasks(tasks.iter(), only_status)
+                    } else {
+                        print_visible_tasks(tasks.iter());
+                    }
+                }
+            }
         }
         Command::Done { task } => {
             let task = task.join(" ");
@@ -517,7 +571,7 @@ fn main() -> io::Result<()> {
             let task = task.join(" ");
             let tasks = Tasks::load_default()?;
             let matched = tasks.find(&task, false).into_iter().map(|(_, t)| t);
-            print_tasks(matched, None);
+            print_visible_tasks(matched);
         }
         Command::Detail { task } => {
             let task = task.join(" ");
