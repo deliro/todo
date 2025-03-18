@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::env::home_dir;
 use std::fmt::{Display, Formatter};
 use std::fs::{File, OpenOptions};
-use std::io::{BufReader, Write, stdin};
+use std::io::{BufRead, BufReader, Read, Write, stdin};
 use std::path::PathBuf;
 use std::{fmt, fs, io};
 use strsim::jaro_winkler;
@@ -19,24 +19,21 @@ const DONE_STATUS: &str = "done";
 const DROPPED_STATUS: &str = "drop";
 
 fn read_line() -> io::Result<String> {
-    let mut buf = String::new();
-    stdin().read_line(&mut buf)?;
-    Ok(buf.trim().to_string())
+    let mut buf = vec![];
+    let mut handle = stdin().lock();
+    handle.read_until('\n' as u8, &mut buf)?;
+    Ok(String::from_utf8_lossy(&buf).trim().to_string())
 }
 
-fn read_lines() -> io::Result<String> {
+fn read_stdin() -> io::Result<String> {
+    let mut buf = vec![];
+    let mut handle = stdin().lock();
     if atty::is(Stream::Stdin) {
-        let mut buf = String::new();
-        stdin().read_line(&mut buf)?;
-        Ok(buf.trim().to_string())
+        handle.read_until(b'\n', &mut buf)?;
     } else {
-        let mut buf = String::new();
-        for line in stdin().lines() {
-            buf.push_str(&line?);
-            buf.push_str("\n");
-        }
-        Ok(buf.trim().to_string())
+        handle.read_to_end(&mut buf)?;
     }
+    Ok(String::from_utf8_lossy(&buf).trim().to_string())
 }
 
 trait StringExt {
@@ -548,7 +545,7 @@ fn main() -> io::Result<()> {
                 None => print_not_found!(),
                 Some(task) => {
                     println!("Comment for {task}:");
-                    let comment = read_lines()?;
+                    let comment = read_stdin()?;
                     if !comment.is_empty() {
                         task.add_comment(&comment);
                     }
