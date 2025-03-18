@@ -69,6 +69,7 @@ enum Command {
     #[clap(visible_aliases = &["remove", "delete", "rm"])]
     Drop { task: Vec<String> },
     /// Rename a task
+    #[clap(visible_alias = "r")]
     Rename { task: Vec<String> },
     /// Find tasks
     #[clap(visible_alias = "f")]
@@ -77,6 +78,7 @@ enum Command {
     #[clap(visible_alias = "d")]
     Detail { task: Vec<String> },
     /// Add a comment to a task
+    #[clap(visible_alias = "c")]
     Comment { task: Vec<String> },
     /// Physically remove all dropped tasks
     RemoveDropped,
