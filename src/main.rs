@@ -86,7 +86,7 @@ enum Command {
     External(Vec<String>),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Hash, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Hash, Eq, Copy)]
 #[serde(rename_all = "lowercase")]
 enum Status {
     Todo,
@@ -391,7 +391,7 @@ impl Tasks {
 fn print_visible_tasks<'a>(tasks: impl Iterator<Item=&'a Task> + 'a) {
     let mut by_status: HashMap<_, Vec<_>> = HashMap::new();
     for task in tasks {
-        by_status.entry(task.status.clone()).or_default().push(task);
+        by_status.entry(&task.status).or_default().push(task);
     }
     for status in Status::list_visible() {
         if let Some(status_tasks) = by_status.get(&status) {
@@ -515,12 +515,14 @@ fn main() -> io::Result<()> {
         Command::List { status } => {
             let tasks = Tasks::load_default()?;
             match status {
-                None => { print_visible_tasks(tasks.iter()); }
+                None => print_visible_tasks(tasks.iter()),
                 Some(str_status) => {
-                    if let Ok(only_status) = Status::from_str(&str_status) {
-                        print_only_status_tasks(tasks.iter(), only_status)
-                    } else {
-                        print_visible_tasks(tasks.iter());
+                    match str_status.parse::<Status>() {
+                        Ok(only_status) => print_only_status_tasks(tasks.iter(), only_status),
+                        Err(_) => {
+                            log::debug!("Unknown status {str_status}");
+                            print_visible_tasks(tasks.iter());
+                        }
                     }
                 }
             }
