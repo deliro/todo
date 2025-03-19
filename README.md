@@ -41,11 +41,13 @@ This will create a task `make a wish`.
 
 ### Change task status
 
-#### Mark task as "todo"
+#### Mark task as "todo" from "drop" or "done" statuses
 
 ```sh
-todo todo <task>
+todo recover <task>
 ```
+
+Alias: `todo`
 
 #### Mark task as "done"
 
@@ -106,4 +108,4 @@ todo drop buy milk  # Deletes "buy milk"
 
 ## License
 
-This project is distributed under the MIT License.
+This project is distributed under the [MIT License](LICENSE).

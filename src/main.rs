@@ -58,8 +58,9 @@ enum Command {
     /// Print tasks list
     #[clap(visible_aliases = &["l", "ls"])]
     List { status: Option<String> },
-    /// Change status to todo
-    Todo { task: Vec<String> },
+    /// Recover status to todo status again
+    #[clap(visible_alias = "todo")]
+    Recover { task: Vec<String> },
     /// Change status to done
     Done { task: Vec<String> },
     /// Remove a task (soft-delete)
@@ -532,7 +533,7 @@ fn main() -> io::Result<()> {
             }
             tasks.save()?;
         }
-        Command::Todo { task } => {
+        Command::Recover { task } => {
             let task = task.join(" ");
             let mut tasks = Tasks::load_default()?;
             match tasks
