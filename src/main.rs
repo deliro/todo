@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::env::home_dir;
 use std::fmt::{Display, Formatter};
 use std::fs::{File, OpenOptions};
-use std::io::{stdin, BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Read, Write, stdin};
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::{fmt, fs, io};
@@ -95,10 +95,9 @@ enum Status {
 }
 
 impl Status {
-    fn is_visible(&self) -> bool {
+    fn is_visible(self) -> bool {
         match self {
-            Status::Todo => true,
-            Status::Done => true,
+            Status::Todo | Status::Done => true,
             Status::Drop => false,
         }
     }
@@ -123,7 +122,7 @@ impl FromStr for Status {
 
 impl Display for Status {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?}", self)
+        write!(f, "{self:?}")
     }
 }
 
@@ -142,8 +141,6 @@ impl Display for Task {
         write!(f, "{}. {}", self.id, self.title)
     }
 }
-
-
 
 impl Task {
     fn details(&self) -> Result<String, fmt::Error> {
@@ -226,7 +223,6 @@ struct Tasks {
     inner: Vec<Task>,
     filename: PathBuf,
 }
-
 
 impl Tasks {
     fn default_path() -> PathBuf {
@@ -388,7 +384,7 @@ impl Tasks {
     }
 }
 
-fn print_visible_tasks<'a>(tasks: impl Iterator<Item=&'a Task> + 'a) {
+fn print_visible_tasks<'a>(tasks: impl Iterator<Item = &'a Task> + 'a) {
     let mut by_status: HashMap<_, Vec<_>> = HashMap::new();
     for task in tasks {
         by_status.entry(&task.status).or_default().push(task);
@@ -403,8 +399,7 @@ fn print_visible_tasks<'a>(tasks: impl Iterator<Item=&'a Task> + 'a) {
     }
 }
 
-
-fn print_only_status_tasks<'a>(tasks: impl Iterator<Item=&'a Task> + 'a, only_status: Status) {
+fn print_only_status_tasks<'a>(tasks: impl Iterator<Item = &'a Task> + 'a, only_status: Status) {
     println!("[{only_status}]:");
     for task in tasks {
         if task.status == only_status {
@@ -516,15 +511,13 @@ fn main() -> io::Result<()> {
             let tasks = Tasks::load_default()?;
             match status {
                 None => print_visible_tasks(tasks.iter()),
-                Some(str_status) => {
-                    match str_status.parse::<Status>() {
-                        Ok(only_status) => print_only_status_tasks(tasks.iter(), only_status),
-                        Err(_) => {
-                            log::debug!("Unknown status {str_status}");
-                            print_visible_tasks(tasks.iter());
-                        }
+                Some(str_status) => match str_status.parse::<Status>() {
+                    Ok(only_status) => print_only_status_tasks(tasks.iter(), only_status),
+                    Err(_) => {
+                        log::debug!("Unknown status {str_status}");
+                        print_visible_tasks(tasks.iter());
                     }
-                }
+                },
             }
         }
         Command::Done { task } => {
@@ -644,7 +637,7 @@ fn main() -> io::Result<()> {
         }
         Command::Where => {
             if let Some(path) = Tasks::default_path().to_str() {
-                println!("{path}")
+                println!("{path}");
             }
         }
     }
