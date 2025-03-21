@@ -10,7 +10,6 @@ use std::env::home_dir;
 use std::fmt::{Display, Formatter};
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Read, Write, stdin};
-use std::ops::Deref;
 use std::path::PathBuf;
 use std::process::Command as Cmd;
 use std::str::FromStr;
@@ -43,22 +42,11 @@ enum Multiline {
     Full(String),
 }
 
-impl Deref for Multiline {
-    type Target = str;
-
-    fn deref(&self) -> &Self::Target {
-        match self {
-            Multiline::Append(x) => x,
-            Multiline::Full(x) => x,
-        }
-    }
-}
-
-fn read_multiline(initial: Option<&str>) -> io::Result<Multiline> {
+fn read_multiline(initial: &str) -> io::Result<Multiline> {
     Ok(match (atty::is(Stream::Stdin), get_editor()) {
         (true, Some(editor)) => Multiline::Full({
             let mut tmp_file = NamedTempFile::new()?;
-            write!(tmp_file, "{}", initial.unwrap_or(""))?;
+            write!(tmp_file, "{}", initial)?;
             let path = tmp_file.path();
             Cmd::new(editor).arg(path).status()?;
             fs::read_to_string(path)?
@@ -664,7 +652,7 @@ fn main() -> io::Result<()> {
                 None => print_not_found!(),
                 Some(task) => {
                     println!("Comment for {task}:");
-                    let comment = read_multiline(Some(task.comments.as_str()))?;
+                    let comment = read_multiline(task.comments.as_str())?;
                     task.add_comment(comment);
                 }
             }
