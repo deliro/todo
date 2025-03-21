@@ -104,8 +104,10 @@ enum Command {
     #[clap(visible_aliases = &["l", "ls"])]
     List { status: Option<String> },
     /// Change status to todo
+    #[clap(visible_alias = "t")]
     Todo { task: Vec<String> },
     /// Change status to done
+    #[clap(visible_alias = "dn")]
     Done { task: Vec<String> },
     /// Remove a task (soft-delete)
     #[clap(visible_aliases = &["remove", "delete", "rm"])]
@@ -125,6 +127,7 @@ enum Command {
     /// Physically remove all dropped tasks
     RemoveDropped,
     /// Prints the tasks file path
+    #[clap(visible_alias = "w")]
     Where,
     /// Create new task
     #[clap(external_subcommand)]
