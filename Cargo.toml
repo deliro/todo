@@ -12,3 +12,5 @@ chrono = { version = "0.4.40", features = ["serde"] }
 log = { version = "0.4.26", features = ["kv"] }
 env_logger = "0.11.6"
 atty = "0.2.14"
+tempfile = "3"
+which = "7"

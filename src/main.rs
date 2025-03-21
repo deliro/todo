@@ -10,10 +10,13 @@ use std::env::home_dir;
 use std::fmt::{Display, Formatter};
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Read, Write, stdin};
+use std::ops::Deref;
 use std::path::PathBuf;
+use std::process::Command as Cmd;
 use std::str::FromStr;
-use std::{fmt, fs, io};
+use std::{env, fmt, fs, io};
 use strsim::jaro_winkler;
+use tempfile::NamedTempFile;
 
 fn read_line() -> io::Result<String> {
     let mut buf = vec![];
@@ -22,15 +25,57 @@ fn read_line() -> io::Result<String> {
     Ok(String::from_utf8_lossy(&buf).trim().to_string())
 }
 
-fn read_stdin() -> io::Result<String> {
-    let mut buf = vec![];
-    let mut handle = stdin().lock();
-    if atty::is(Stream::Stdin) {
-        handle.read_until(b'\n', &mut buf)?;
-    } else {
-        handle.read_to_end(&mut buf)?;
+fn get_editor() -> io::Result<String> {
+    env::var("EDITOR")
+        .or_else(|_| env::var("VISUAL"))
+        .or_else(|_| {
+            ["nvim", "vim", "vi", "nano"]
+                .iter()
+                .find(|&&e| which::which(e).is_ok())
+                .map(|s| s.to_string())
+                .ok_or(io::Error::other("no editor was found"))
+        })
+}
+
+enum Multiline {
+    Append(String),
+    Full(String),
+}
+
+impl Deref for Multiline {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Multiline::Append(x) => x,
+            Multiline::Full(x) => x,
+        }
     }
-    Ok(String::from_utf8_lossy(&buf).trim().to_string())
+}
+
+fn read_multiline(initial: Option<&str>) -> io::Result<Multiline> {
+    Ok(match (atty::is(Stream::Stdin), get_editor()) {
+        (true, Ok(editor)) => {
+            let mut tmp_file = NamedTempFile::new()?;
+            write!(tmp_file, "{}", initial.unwrap_or(""))?;
+            let path = tmp_file.path();
+            Cmd::new(editor).arg(path).status()?;
+            Multiline::Full(fs::read_to_string(path)?)
+        }
+        (is_tty, _) => {
+            let mut buf = vec![];
+            let mut handle = stdin().lock();
+            if is_tty {
+                // Fallback variant when no suitable editor was found.
+                // Just read one line from stdin
+                log::error!("no editor was found");
+                handle.read_until(b'\n', &mut buf)?;
+            } else {
+                handle.read_to_end(&mut buf)?;
+            }
+            Multiline::Append(String::from_utf8_lossy(&buf).trim().to_string())
+        }
+    })
 }
 
 trait StringExt {
@@ -175,11 +220,19 @@ impl Task {
         self.updated_at = Utc::now();
     }
 
-    fn add_comment(&mut self, comment: &str) {
-        if !self.comments.is_empty() {
-            self.comments.push_str("\n\n");
+    fn add_comment(&mut self, comment: Multiline) {
+        match comment {
+            Multiline::Append(comment) => {
+                if !comment.is_empty() {
+                    if !self.comments.is_empty() {
+                        self.comments.push('\n');
+                    }
+                    self.comments.push_str(&comment);
+                }
+            }
+            Multiline::Full(comment) => self.comments = comment,
         }
-        self.comments.push_str(comment);
+
         self.updated_at = Utc::now();
     }
 
@@ -596,10 +649,8 @@ fn main() -> io::Result<()> {
                 None => print_not_found!(),
                 Some(task) => {
                     println!("Comment for {task}:");
-                    let comment = read_stdin()?;
-                    if !comment.is_empty() {
-                        task.add_comment(&comment);
-                    }
+                    let comment = read_multiline(Some(task.comments.as_str()))?;
+                    task.add_comment(comment);
                 }
             }
 
