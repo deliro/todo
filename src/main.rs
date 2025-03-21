@@ -25,15 +25,16 @@ fn read_line() -> io::Result<String> {
     Ok(String::from_utf8_lossy(&buf).trim().to_string())
 }
 
-fn get_editor() -> io::Result<String> {
+fn get_editor() -> Option<String> {
     env::var("EDITOR")
-        .or_else(|_| env::var("VISUAL"))
-        .or_else(|_| {
+        .ok()
+        .and_then(|x| x.not_empty())
+        .or_else(|| env::var("VISUAL").ok().and_then(|x| x.not_empty()))
+        .or_else(|| {
             ["nvim", "vim", "vi", "nano"]
                 .iter()
                 .find(|&&e| which::which(e).is_ok())
                 .map(|s| s.to_string())
-                .ok_or(io::Error::other("no editor was found"))
         })
 }
 
@@ -55,14 +56,14 @@ impl Deref for Multiline {
 
 fn read_multiline(initial: Option<&str>) -> io::Result<Multiline> {
     Ok(match (atty::is(Stream::Stdin), get_editor()) {
-        (true, Ok(editor)) => {
+        (true, Some(editor)) => Multiline::Full({
             let mut tmp_file = NamedTempFile::new()?;
             write!(tmp_file, "{}", initial.unwrap_or(""))?;
             let path = tmp_file.path();
             Cmd::new(editor).arg(path).status()?;
-            Multiline::Full(fs::read_to_string(path)?)
-        }
-        (is_tty, _) => {
+            fs::read_to_string(path)?
+        }),
+        (is_tty, _) => Multiline::Append({
             let mut buf = vec![];
             let mut handle = stdin().lock();
             if is_tty {
@@ -73,13 +74,16 @@ fn read_multiline(initial: Option<&str>) -> io::Result<Multiline> {
             } else {
                 handle.read_to_end(&mut buf)?;
             }
-            Multiline::Append(String::from_utf8_lossy(&buf).trim().to_string())
-        }
+            String::from_utf8_lossy(&buf).trim().to_string()
+        }),
     })
 }
 
 trait StringExt {
     fn contains_all<T: AsRef<str>>(&self, i: impl IntoIterator<Item = T>) -> bool;
+    fn not_empty(self) -> Option<Self>
+    where
+        Self: Sized;
 }
 
 impl<T> StringExt for T
@@ -88,6 +92,14 @@ where
 {
     fn contains_all<Item: AsRef<str>>(&self, i: impl IntoIterator<Item = Item>) -> bool {
         i.into_iter().all(|x| self.as_ref().contains(x.as_ref()))
+    }
+
+    fn not_empty(self) -> Option<Self> {
+        if self.as_ref().is_empty() {
+            None
+        } else {
+            Some(self)
+        }
     }
 }
 
