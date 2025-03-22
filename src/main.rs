@@ -224,6 +224,7 @@ impl Task {
     }
 
     fn add_comment(&mut self, comment: Multiline) {
+        let old = self.comments.clone();
         match comment {
             Multiline::Append(comment) => {
                 if !comment.is_empty() {
@@ -236,7 +237,9 @@ impl Task {
             Multiline::Full(comment) => self.comments = comment,
         }
 
-        self.updated_at = Utc::now();
+        if self.comments != old {
+            self.updated_at = Utc::now();
+        }
     }
 
     fn set_status(&mut self, status: Status) {
