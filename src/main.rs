@@ -186,7 +186,11 @@ struct Task {
 
 impl Display for Task {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{}. {}", self.id, self.title)
+        write!(f, "{}. {}", self.id, self.title)?;
+        if !self.comments.trim().is_empty() {
+            write!(f, " [*]")?;
+        }
+        Ok(())
     }
 }
 
