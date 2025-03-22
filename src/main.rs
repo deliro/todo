@@ -95,7 +95,7 @@ where
 #[command(name = "todo")]
 struct TodoCli {
     #[command(subcommand)]
-    command: Command,
+    command: Option<Command>,
 }
 
 #[derive(Subcommand)]
@@ -570,7 +570,7 @@ fn main() -> io::Result<()> {
         .init();
     let cli = TodoCli::parse();
     match cli.command {
-        Command::List { status } => {
+        Some(Command::List { status }) => {
             let tasks = Tasks::load_default()?;
             match status {
                 None => print_visible_tasks(tasks.iter()),
@@ -583,7 +583,7 @@ fn main() -> io::Result<()> {
                 },
             }
         }
-        Command::Done { task } => {
+        Some(Command::Done { task }) => {
             let task = task.join(" ");
             let mut tasks = Tasks::load_default()?;
             match tasks
@@ -595,7 +595,7 @@ fn main() -> io::Result<()> {
             }
             tasks.save()?;
         }
-        Command::Todo { task } => {
+        Some(Command::Todo { task }) => {
             let task = task.join(" ");
             let mut tasks = Tasks::load_default()?;
             match tasks
@@ -607,7 +607,7 @@ fn main() -> io::Result<()> {
             }
             tasks.save()?;
         }
-        Command::Drop { task } => {
+        Some(Command::Drop { task }) => {
             let task = task.join(" ");
             let mut tasks = Tasks::load_default()?;
             match tasks
@@ -619,7 +619,7 @@ fn main() -> io::Result<()> {
             }
             tasks.save()?;
         }
-        Command::External(args) => {
+        Some(Command::External(args)) => {
             let mut tasks = Tasks::load_default()?;
             let title = args.join(" ");
             let loc = tasks.todo(title, String::new());
@@ -627,13 +627,13 @@ fn main() -> io::Result<()> {
             let task = tasks.find_idx(loc.idx).unwrap();
             println!("Task has been created: {task}");
         }
-        Command::Find { task } => {
+        Some(Command::Find { task }) => {
             let task = task.join(" ");
             let tasks = Tasks::load_default()?;
             let matched = tasks.find(&task, false).into_iter().map(|(_, t)| t);
             print_visible_tasks(matched);
         }
-        Command::Detail { task } => {
+        Some(Command::Detail { task }) => {
             let task = task.join(" ");
             let tasks = Tasks::load_default()?;
 
@@ -648,7 +648,7 @@ fn main() -> io::Result<()> {
                 }
             }
         }
-        Command::Comment { task } => {
+        Some(Command::Comment { task }) => {
             let task = task.join(" ");
             let mut tasks = Tasks::load_default()?;
 
@@ -666,7 +666,7 @@ fn main() -> io::Result<()> {
 
             tasks.save()?;
         }
-        Command::Rename { task } => {
+        Some(Command::Rename { task }) => {
             let task = task.join(" ");
             let mut tasks = Tasks::load_default()?;
             match tasks
@@ -682,7 +682,7 @@ fn main() -> io::Result<()> {
             }
             tasks.save()?;
         }
-        Command::RemoveDropped => {
+        Some(Command::RemoveDropped) => {
             println!("Are you sure? [y/N]");
             let confirmation = read_line()?.to_lowercase();
             if ["y", "yes"].contains(&&*confirmation) {
@@ -696,10 +696,14 @@ fn main() -> io::Result<()> {
                 }
             }
         }
-        Command::Where => {
+        Some(Command::Where) => {
             if let Some(path) = Tasks::default_path().to_str() {
                 println!("{path}");
             }
+        }
+        None => {
+            let tasks = Tasks::load_default()?;
+            print_visible_tasks(tasks.iter())
         }
     }
     Ok(())
