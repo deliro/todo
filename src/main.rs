@@ -126,7 +126,8 @@ enum Command {
     Comment { task: Vec<String> },
     /// Physically remove all dropped tasks
     RemoveDropped,
-    /// Prints the tasks file path
+
+    /// Print the tasks file path
     #[clap(visible_alias = "w")]
     Where,
     /// Create new task
@@ -289,6 +290,12 @@ struct Tasks {
 
 impl Tasks {
     fn default_path() -> PathBuf {
+        if let Some((_, value)) =
+            env::vars().find(|(key, value)| key == "TASKS_FILE" && !value.trim().is_empty())
+        {
+            log::debug!("TASKS_FILE was found: {value:?}");
+            return value.trim().into();
+        }
         #[allow(deprecated)]
         let mut file = home_dir().expect("cannot determine home directory");
         file.push(".todo");
