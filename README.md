@@ -189,6 +189,31 @@ created at: 2025-03-23T21:41:07.640567+03:00
 updated at: 2025-03-23T21:43:05.604565+03:00
 ```
 
+### Backing up your tasks
+
+It's a good idea to back up your tasks on a regular basis. Git is a perfect tool for
+that.
+
+Do the following steps:
+
+1. Create an empty git repository somewhere (private GitHub repository for example)
+2. `cd $(dirname $(todo w))`
+3. `git init`
+4. `git remote add origin git@github.com:your-username/repo-name.git`
+5. `git add tasks.csv`
+6. `git commit -m "initial"`
+7. `git push -u origin master`
+8. run `which todo` and remember the path
+9. `crontab -e`
+10. ```sh
+    MAILTO=""
+    0 * * * * cd $(dirname $(/the/path/from/step-8 w)) && git diff --quiet || (git add tasks.csv && git commit -m "
+    Auto-commit $(date +\%Y-\%m-\%d\ \%H:\%M:\%S)" && git push)
+    ```
+11. save the crontab file (`ESC-Z-Z` in case you're in vim/nvim/vi)
+
+Now your tasks are backed up every hour if changes were made.
+
 ## License
 
 This project is distributed under the MIT License.
