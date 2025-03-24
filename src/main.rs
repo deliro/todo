@@ -104,7 +104,7 @@ enum Command {
     #[clap(visible_aliases = &["l", "ls"])]
     List { status: Option<String> },
     /// Change status to todo
-    #[clap(visible_alias = "t")]
+    #[clap(visible_aliases = &["t", "recover"])]
     Todo { task: Vec<String> },
     /// Change status to done
     #[clap(visible_alias = "dn")]
