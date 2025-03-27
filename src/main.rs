@@ -152,7 +152,7 @@ impl Status {
     }
 
     fn list_visible() -> [Self; 2] {
-        [Self::Todo, Self::Done]
+        [Self::Done, Self::Todo]
     }
 }
 
