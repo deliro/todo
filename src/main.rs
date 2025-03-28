@@ -154,6 +154,10 @@ impl Status {
     fn list_visible() -> [Self; 2] {
         [Self::Done, Self::Todo]
     }
+
+    fn all() -> [Self; 3] {
+        [Self::Drop, Self::Done, Self::Todo]
+    }
 }
 
 impl FromStr for Status {
@@ -439,7 +443,11 @@ impl Tasks {
             [one] => Some(one.0),
             many => {
                 println!("Select ID:");
-                print_visible_tasks(many.iter().map(|(_, x)| *x));
+                let tasks = many.iter().map(|(_, x)| *x);
+                match show_dropped {
+                    true => print_all_tasks(tasks),
+                    false => print_visible_tasks(tasks),
+                };
                 let id: usize = read_line().ok()?.parse().ok()?;
                 // Despite the fact this id may exist, we force user to choose only
                 // over the list we printed to prevent mistakes
@@ -455,25 +463,27 @@ impl Tasks {
 }
 
 fn print_visible_tasks<'a>(tasks: impl Iterator<Item = &'a Task> + 'a) {
+    print_only_status_tasks(tasks, &Status::list_visible())
+}
+
+fn print_all_tasks<'a>(tasks: impl Iterator<Item = &'a Task> + 'a) {
+    print_only_status_tasks(tasks, &Status::all())
+}
+
+fn print_only_status_tasks<'a>(
+    tasks: impl Iterator<Item = &'a Task> + 'a,
+    only_statuses: &[Status],
+) {
     let mut by_status: HashMap<_, Vec<_>> = HashMap::new();
     for task in tasks {
         by_status.entry(&task.status).or_default().push(task);
     }
-    for status in Status::list_visible() {
-        if let Some(status_tasks) = by_status.get(&status) {
+    for status in only_statuses {
+        if let Some(status_tasks) = by_status.get(status) {
             println!("[{status}]:");
             for task in status_tasks {
                 println!("{task}");
             }
-        }
-    }
-}
-
-fn print_only_status_tasks<'a>(tasks: impl Iterator<Item = &'a Task> + 'a, only_status: Status) {
-    println!("[{only_status}]:");
-    for task in tasks {
-        if task.status == only_status {
-            println!("{task}");
         }
     }
 }
@@ -582,7 +592,7 @@ fn main() -> io::Result<()> {
             match status {
                 None => print_visible_tasks(tasks.iter()),
                 Some(str_status) => match str_status.parse::<Status>() {
-                    Ok(only_status) => print_only_status_tasks(tasks.iter(), only_status),
+                    Ok(only_status) => print_only_status_tasks(tasks.iter(), &[only_status]),
                     Err(_) => {
                         log::debug!("Unknown status {str_status}");
                         print_visible_tasks(tasks.iter());
@@ -637,8 +647,8 @@ fn main() -> io::Result<()> {
         Some(Command::Find { task }) => {
             let task = task.join(" ");
             let tasks = Tasks::load_default()?;
-            let matched = tasks.find(&task, false).into_iter().map(|(_, t)| t);
-            print_visible_tasks(matched);
+            let matched = tasks.find(&task, true).into_iter().map(|(_, t)| t);
+            print_all_tasks(matched);
         }
         Some(Command::Detail { task }) => {
             let task = task.join(" ");
@@ -710,7 +720,7 @@ fn main() -> io::Result<()> {
         }
         None => {
             let tasks = Tasks::load_default()?;
-            print_visible_tasks(tasks.iter())
+            print_only_status_tasks(tasks.iter(), &[Status::Todo])
         }
     }
     Ok(())

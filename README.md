@@ -27,19 +27,19 @@ cargo install --git https://github.com/deliro/todo
 
 Run the CLI with one of the available commands:
 
+### List todo tasks
+
+```sh
+todo
+```
+
 ### List tasks
 
 ```sh
-todo list
+todo list [status]
 ```
 
 Aliases: `l`, `ls`.
-
-or just
-
-```sh 
-todo
-```
 
 ### Add a new task
 
