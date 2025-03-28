@@ -144,19 +144,14 @@ enum Status {
 }
 
 impl Status {
+    const ALL: &'static [Self] = &[Self::Drop, Self::Done, Self::Todo];
+    const VISIBLE: &'static [Self] = &[Self::Done, Self::Todo];
+
     fn is_visible(self) -> bool {
         match self {
             Status::Todo | Status::Done => true,
             Status::Drop => false,
         }
-    }
-
-    fn list_visible() -> [Self; 2] {
-        [Self::Done, Self::Todo]
-    }
-
-    fn all() -> [Self; 3] {
-        [Self::Drop, Self::Done, Self::Todo]
     }
 }
 
@@ -463,11 +458,11 @@ impl Tasks {
 }
 
 fn print_visible_tasks<'a>(tasks: impl Iterator<Item = &'a Task> + 'a) {
-    print_only_status_tasks(tasks, &Status::list_visible())
+    print_only_status_tasks(tasks, Status::VISIBLE)
 }
 
 fn print_all_tasks<'a>(tasks: impl Iterator<Item = &'a Task> + 'a) {
-    print_only_status_tasks(tasks, &Status::all())
+    print_only_status_tasks(tasks, Status::ALL)
 }
 
 fn print_only_status_tasks<'a>(
