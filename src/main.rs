@@ -2,11 +2,10 @@ use atty::Stream;
 use chrono::{Local, Utc};
 use clap::{Parser, Subcommand};
 use csv::{ReaderBuilder, WriterBuilder};
+use homedir::my_home;
 use serde::{Deserialize, Serialize};
 use std::cmp::{Ordering, PartialEq};
 use std::collections::HashMap;
-#[allow(deprecated)]
-use std::env::home_dir;
 use std::fmt::{Display, Formatter};
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Read, Write, stdin};
@@ -298,8 +297,10 @@ impl Tasks {
             log::debug!("TASKS_FILE was found: {value:?}");
             return value.trim().into();
         }
-        #[allow(deprecated)]
-        let mut file = home_dir().expect("cannot determine home directory");
+        let mut file = my_home()
+            .transpose()
+            .unwrap()
+            .expect("cannot determine home directory");
         file.push(".todo");
         file.push("tasks.csv");
         file
@@ -360,9 +361,11 @@ impl Tasks {
 
     fn drop_done(&mut self) -> usize {
         let mut dropped = 0;
-        self.inner.iter_mut().for_each(|task| if task.status == Status::Done {
-            task.set_status(Status::Drop);
-            dropped += 1
+        self.inner.iter_mut().for_each(|task| {
+            if task.status == Status::Done {
+                task.set_status(Status::Drop);
+                dropped += 1
+            }
         });
         dropped
     }
