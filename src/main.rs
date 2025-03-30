@@ -99,36 +99,36 @@ struct TodoCli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Print tasks list
+    /// Print `todo` and `done` tasks lists
     #[clap(visible_aliases = &["l", "ls"])]
     List { status: Option<String> },
-    /// Change status to todo
+    /// Change status to `todo`
     #[clap(visible_aliases = &["t", "recover"])]
     Todo { task: Vec<String> },
-    /// Change status to done
+    /// Change status to `done`
     #[clap(visible_alias = "dn")]
     Done { task: Vec<String> },
-    /// Remove a task (soft-delete)
+    /// Remove a task. If the task in `todo` or `done` status, soft-deletes it
+    /// (set `drop` status). If the task is already in `drop` status, physically
+    /// removes it.
     #[clap(visible_aliases = &["remove", "delete", "rm"])]
     Drop { task: Vec<String> },
     /// Rename a task
     #[clap(visible_alias = "r")]
     Rename { task: Vec<String> },
-    /// Find tasks
+    /// Find tasks (including `drop` status)
     #[clap(visible_alias = "f")]
     Find { task: Vec<String> },
-    /// Show a task's details (comments)
+    /// Show a task's details and comments
     #[clap(visible_alias = "d")]
     Detail { task: Vec<String> },
     /// Add a comment to a task
     #[clap(visible_alias = "c")]
     Comment { task: Vec<String> },
-    /// Physically remove all dropped tasks
+    /// Physically remove all tasks in `drop` status
     RemoveDropped,
-
-    /// Remove all done tasks
+    /// Soft-delete all done tasks (set `drop` status)
     DropDone,
-
     /// Print the tasks file path
     #[clap(visible_alias = "w")]
     Where,
@@ -600,13 +600,7 @@ macro_rules! print_not_found {
 
 fn confirm() -> bool {
     println!("Are you sure? [y/N]");
-    match read_line() {
-        Ok(v) => {
-            let confirmation = v.to_lowercase();
-            ["y", "yes"].contains(&&*confirmation)
-        }
-        Err(_) => false,
-    }
+    read_line().is_ok_and(|v| ["y", "yes"].contains(&v.to_lowercase().trim()))
 }
 
 #[allow(clippy::too_many_lines)]
@@ -662,31 +656,26 @@ fn main() -> io::Result<()> {
 
             let task = task.join(" ");
             let mut tasks = Tasks::load_default()?;
-            let Some((loc, method)) = tasks
+            match tasks
                 .select_interactive(&task, true)
-                .and_then(|loc| tasks.find_idx(loc.idx).map(|task| (loc, task)))
-                .map(|(loc, task)| match task.status {
-                    Status::Drop => (loc, Method::Remove),
-                    _ => (loc, Method::Drop),
+                .and_then(|loc| {
+                    tasks.find_idx(loc.idx).map(|task| match task.status {
+                        Status::Drop => (loc, Method::Remove),
+                        _ => (loc, Method::Drop),
+                    })
                 })
-            else {
-                print_not_found!();
-                return Ok(());
-            };
-
-            let result = match method {
-                Method::Drop => tasks.set_dropped_idx(loc.idx).cloned().map(|x| (method, x)),
-                Method::Remove => confirm()
-                    .then(|| tasks.remove(loc.idx))
-                    .flatten()
-                    .map(|x| (method, x)),
-            };
-
-            match result {
+                .and_then(|(loc, method)| match method {
+                    Method::Drop => tasks.set_dropped_idx(loc.idx).cloned().map(|x| (method, x)),
+                    Method::Remove => confirm()
+                        .then(|| tasks.remove(loc.idx))
+                        .flatten()
+                        .map(|x| (method, x)),
+                }) {
                 None => print_not_found!(),
                 Some((Method::Drop, t)) => println!("Dropped: {t}"),
                 Some((Method::Remove, t)) => println!("Removed: {t}"),
             }
+
             tasks.save()?;
         }
         Some(Command::External(args)) => {
