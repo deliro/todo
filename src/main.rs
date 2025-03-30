@@ -127,6 +127,9 @@ enum Command {
     /// Physically remove all dropped tasks
     RemoveDropped,
 
+    /// Remove all done tasks
+    DropDone,
+
     /// Print the tasks file path
     #[clap(visible_alias = "w")]
     Where,
@@ -355,6 +358,24 @@ impl Tasks {
         orig_len - new_len
     }
 
+    fn drop_done(&mut self) -> usize {
+        let mut dropped = 0;
+        self.inner.iter_mut().for_each(|task| if task.status == Status::Done {
+            task.set_status(Status::Drop);
+            dropped += 1
+        });
+        dropped
+    }
+
+    fn remove(&mut self, idx: Idx) -> Option<Task> {
+        let idx = idx.into();
+        if idx < self.inner.len() {
+            Some(self.inner.remove(idx))
+        } else {
+            None
+        }
+    }
+
     fn next_loc(&self) -> Loc {
         // We might have assumed the last vec element is the latest hence has the
         // greatest ID, but the tasks file may be externally shuffled so seq scan
@@ -574,6 +595,17 @@ macro_rules! print_not_found {
     };
 }
 
+fn confirm() -> bool {
+    println!("Are you sure? [y/N]");
+    match read_line() {
+        Ok(v) => {
+            let confirmation = v.to_lowercase();
+            ["y", "yes"].contains(&&*confirmation)
+        }
+        Err(_) => false,
+    }
+}
+
 #[allow(clippy::too_many_lines)]
 fn main() -> io::Result<()> {
     env_logger::builder()
@@ -620,14 +652,37 @@ fn main() -> io::Result<()> {
             tasks.save()?;
         }
         Some(Command::Drop { task }) => {
+            enum Method {
+                Drop,
+                Remove,
+            }
+
             let task = task.join(" ");
             let mut tasks = Tasks::load_default()?;
-            match tasks
-                .select_interactive(&task, false)
-                .and_then(|loc| tasks.set_dropped_idx(loc.idx))
-            {
+            let Some((loc, method)) = tasks
+                .select_interactive(&task, true)
+                .and_then(|loc| tasks.find_idx(loc.idx).map(|task| (loc, task)))
+                .map(|(loc, task)| match task.status {
+                    Status::Drop => (loc, Method::Remove),
+                    _ => (loc, Method::Drop),
+                })
+            else {
+                print_not_found!();
+                return Ok(());
+            };
+
+            let result = match method {
+                Method::Drop => tasks.set_dropped_idx(loc.idx).cloned().map(|x| (method, x)),
+                Method::Remove => confirm()
+                    .then(|| tasks.remove(loc.idx))
+                    .flatten()
+                    .map(|x| (method, x)),
+            };
+
+            match result {
                 None => print_not_found!(),
-                Some(t) => println!("Dropped: {t}"),
+                Some((Method::Drop, t)) => println!("Dropped: {t}"),
+                Some((Method::Remove, t)) => println!("Removed: {t}"),
             }
             tasks.save()?;
         }
@@ -695,9 +750,7 @@ fn main() -> io::Result<()> {
             tasks.save()?;
         }
         Some(Command::RemoveDropped) => {
-            println!("Are you sure? [y/N]");
-            let confirmation = read_line()?.to_lowercase();
-            if ["y", "yes"].contains(&&*confirmation) {
+            if confirm() {
                 let mut tasks = Tasks::load_default()?;
                 let removed_n = tasks.remove_dropped();
                 tasks.save()?;
@@ -711,6 +764,18 @@ fn main() -> io::Result<()> {
         Some(Command::Where) => {
             if let Some(path) = Tasks::default_path().to_str() {
                 println!("{path}");
+            }
+        }
+        Some(Command::DropDone) => {
+            if confirm() {
+                let mut tasks = Tasks::load_default()?;
+                let dropped = tasks.drop_done();
+                if dropped > 0 {
+                    println!("{dropped} done tasks were dropped")
+                } else {
+                    println!("Nothing to drop")
+                }
+                tasks.save()?
             }
         }
         None => {
