@@ -3,6 +3,7 @@ use chrono::{Local, Utc};
 use clap::{Parser, Subcommand};
 use csv::{ReaderBuilder, WriterBuilder};
 use homedir::my_home;
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::cmp::{Ordering, PartialEq};
 use std::collections::HashMap;
@@ -15,6 +16,20 @@ use std::str::FromStr;
 use std::{env, fmt, fs, io};
 use strsim::jaro_winkler;
 use tempfile::NamedTempFile;
+
+static TRANSLIT_MAP: Lazy<HashMap<char, char>> = Lazy::new(|| {
+    const ENG: &str = "qwertyuiop[]asdfghjkl;'zxcvbnm,./";
+    const RUS: &str = "йцукенгшщзхъфывапролджэячсмитьбю.";
+
+    ENG.chars().zip(RUS.chars()).collect()
+});
+
+fn translate(input: &str) -> String {
+    input
+        .chars()
+        .map(|c| TRANSLIT_MAP.get(&c).copied().unwrap_or(c))
+        .collect()
+}
 
 fn read_line() -> io::Result<String> {
     let mut buf = vec![];
@@ -433,18 +448,24 @@ impl Tasks {
     }
 
     fn find(&self, needle: &str, show_dropped: bool) -> Vec<(Loc, &Task)> {
+        let needle = needle.trim().to_lowercase();
         let mut candidates = vec![];
+        if needle.is_empty() {
+            return candidates;
+        }
         log::debug!("searching candidates for '{needle}'");
         for (idx, task) in self.iter().enumerate() {
-            let candidate = Candidate::check(needle, task);
+            let candidate = Candidate::check(&needle, task)
+                .or_else(|| Candidate::check(&translate(&needle), task));
             log::debug!("candidate '{task}' result is {candidate:?}");
-            match candidate {
-                Candidate::ById if show_dropped || task.status.is_visible() => {
-                    log::debug!("searching stopped because ID was found");
-                    return vec![(Loc::new(idx, task.id), task)];
+            if let Some(candidate) = candidate {
+                match candidate {
+                    Candidate::ById if show_dropped || task.status.is_visible() => {
+                        log::debug!("searching stopped because ID was found");
+                        return vec![(Loc::new(idx, task.id), task)];
+                    }
+                    _ => candidates.push((Loc::new(idx, task.id), task)),
                 }
-                Candidate::No => {}
-                _ => candidates.push((Loc::new(idx, task.id), task)),
             }
         }
         log::debug!("searching complete");
@@ -543,7 +564,6 @@ fn is_similar_words(needles: &[&str], haystack: &[&str]) -> bool {
 
 #[derive(Debug, Copy, Clone)]
 enum Candidate {
-    No,
     ById,
     SubsetOfTitle,
     SimilarTitle,
@@ -552,43 +572,39 @@ enum Candidate {
 }
 
 impl Candidate {
-    fn check(needle: &str, task: &Task) -> Self {
-        let needle = needle.trim().to_lowercase();
-        if needle.is_empty() {
-            return Candidate::No;
-        }
+    fn check(needle: &str, task: &Task) -> Option<Self> {
+        debug_assert_eq!(needle, needle.trim().to_lowercase());
+        log::debug!("checking needle '{needle}' against task {task}");
         if let Ok(id) = needle.parse::<usize>() {
             if task.id == id {
-                return Candidate::ById;
+                return Some(Candidate::ById);
             }
         }
 
         let needle_words = needle.split_whitespace().collect::<Vec<_>>();
         let title = task.title.to_lowercase();
-        log::debug!("checking title '{title}'");
         if title.contains_all(&needle_words) {
-            return Candidate::SubsetOfTitle;
+            return Some(Candidate::SubsetOfTitle);
         }
 
         if is_similar_words(&needle_words, &title.split_whitespace().collect::<Vec<_>>()) {
-            return Candidate::SimilarTitle;
+            return Some(Candidate::SimilarTitle);
         }
 
         if !task.comments.is_empty() {
             let comment = task.comments.to_lowercase();
-            log::debug!("checking comment '{comment}'");
             if comment.contains_all(&needle_words) {
-                return Candidate::SubsetOfComment;
+                return Some(Candidate::SubsetOfComment);
             }
             if is_similar_words(
                 &needle_words,
                 &comment.split_whitespace().collect::<Vec<_>>(),
             ) {
-                return Candidate::SimilarComment;
+                return Some(Candidate::SimilarComment);
             }
         }
 
-        Candidate::No
+        None
     }
 }
 
@@ -776,4 +792,14 @@ fn main() -> io::Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_translate() {
+        assert_eq!(translate("ghbdtn"), "привет")
+    }
 }

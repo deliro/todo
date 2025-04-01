@@ -570,6 +570,7 @@ dependencies = [
  "env_logger",
  "homedir",
  "log",
+ "once_cell",
  "serde",
  "strsim",
  "tempfile",
