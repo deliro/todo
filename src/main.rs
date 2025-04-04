@@ -1,3 +1,6 @@
+mod filter_parser;
+
+use crate::filter_parser::Attr;
 use atty::Stream;
 use chrono::{Local, Utc};
 use clap::{Parser, Subcommand};
@@ -447,11 +450,18 @@ impl Tasks {
         self.inner.get_mut(i)
     }
 
-    fn find(&self, needle: &str, show_dropped: bool) -> Vec<(Loc, &Task)> {
+    fn find(&self, needle: &str, show_dropped: bool, empty_show_all: bool) -> Vec<(Loc, &Task)> {
         let needle = needle.trim().to_lowercase();
         let mut candidates = vec![];
         if needle.is_empty() {
-            return candidates;
+            return match empty_show_all {
+                true => self
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, task)| (Loc::new(idx, task.id), task))
+                    .collect(),
+                false => candidates,
+            };
         }
         log::debug!("searching candidates for '{needle}'");
         for (idx, task) in self.iter().enumerate() {
@@ -477,7 +487,7 @@ impl Tasks {
     }
 
     fn select_interactive(&self, needle: &str, show_dropped: bool) -> Option<Loc> {
-        let candidates: Vec<_> = self.find(needle, show_dropped).into_iter().collect();
+        let candidates: Vec<_> = self.find(needle, show_dropped, false).into_iter().collect();
         match candidates.as_slice() {
             [] => None,
             [one] => Some(one.0),
@@ -703,9 +713,26 @@ fn main() -> io::Result<()> {
             println!("Task has been created: {task}");
         }
         Some(Command::Find { task }) => {
-            let task = task.join(" ");
             let tasks = Tasks::load_default()?;
-            let matched = tasks.find(&task, true).into_iter().map(|(_, t)| t);
+            let task = task.join(" ");
+            let mut needle = task.as_str();
+            let mut filter = None;
+            if let Ok((tail, (attr, range))) = filter_parser::parse_attr_range(&task) {
+                needle = tail.trim();
+                filter = Some((attr, range));
+            }
+            let matched = tasks
+                .find(needle, true, filter.is_some())
+                .into_iter()
+                .map(|(_, t)| t)
+                .filter(|t| match &filter {
+                    None => true,
+                    Some((attr, range)) => match attr {
+                        Attr::Updated => range.contains(&t.updated_at.date_naive()),
+                        Attr::Created => range.contains(&t.created_at.date_naive()),
+                    },
+                });
+
             print_all_tasks(matched);
         }
         Some(Command::Detail { task }) => {

@@ -214,6 +214,15 @@ Do the following steps:
 
 Now your tasks are backed up every hour if changes were made.
 
+## Examples
+
+`todo find updated before yesterday milk` — find tasks that were updated before yesterday (including) and contains "
+milk" or similar word
+
+`todo find created after 2025-05-04 till now` — find tasks that were created between 2025-05-04 and today
+
+`todo find updated after 2 months ago`
+
 ## License
 
 This project is distributed under the MIT License.
