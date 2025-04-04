@@ -714,7 +714,7 @@ fn main() -> io::Result<()> {
         }
         Some(Command::Find { task }) => {
             let tasks = Tasks::load_default()?;
-            let task = task.join(" ");
+            let task = task.join(" ").to_lowercase();
             let mut needle = task.as_str();
             let mut filter = None;
             if let Ok((tail, (attr, range))) = filter_parser::parse_attr_range(&task) {
