@@ -721,6 +721,7 @@ fn main() -> io::Result<()> {
                 needle = tail.trim();
                 filter = Some((attr, range));
             }
+            log::debug!("filter is {filter:?}");
             let matched = tasks
                 .find(needle, true, filter.is_some())
                 .into_iter()
