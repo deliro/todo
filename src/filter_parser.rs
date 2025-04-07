@@ -230,11 +230,15 @@ fn parse_range(input: &str) -> IResult<&str, (Option<NaiveDate>, Option<NaiveDat
     .parse(input)
 }
 
+fn parse_just_date(input: &str) -> IResult<&str, (Option<NaiveDate>, Option<NaiveDate>)> {
+    map(parse_date_or_label, |x| (Some(x), Some(x))).parse(input)
+}
+
 pub fn parse_attr_range(input: &str) -> IResult<&str, (Attr, RangeInclusive<NaiveDate>)> {
     map(
         (
             preceded(multispace0, parse_attr),
-            preceded(multispace1, parse_range),
+            preceded(multispace1, alt((parse_range, parse_just_date))),
         ),
         |(attr, (lower, upper))| {
             (
@@ -253,6 +257,10 @@ mod tests {
     #[test]
     fn test_ok_parse_attr_range() {
         let cases = [
+            (
+                "updated today",
+                (Attr::Updated, ("2025-05-04", "2025-05-04")),
+            ),
             (
                 "updated after 1 year ago before now",
                 (Attr::Updated, ("2024-05-04", "2025-05-04")),
