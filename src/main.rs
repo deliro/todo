@@ -328,7 +328,7 @@ impl Tasks {
     }
 
     fn load(filename: PathBuf) -> io::Result<Self> {
-        log::debug!("loading tasks from {filename:?}");
+        log::info!("loading tasks from {filename:?}");
         if let Some(dir) = filename.parent() {
             fs::create_dir_all(dir)?;
         }
@@ -436,7 +436,7 @@ impl Tasks {
         }
         let mut file = File::create(&self.filename)?;
         file.write_all(&buf)?;
-        log::debug!("file saved");
+        log::info!("file saved");
         Ok(())
     }
 
@@ -717,11 +717,11 @@ fn main() -> io::Result<()> {
             let task = task.join(" ").to_lowercase();
             let mut needle = task.as_str();
             let mut filter = None;
-            if let Ok((tail, (attr, range))) = filter_parser::parse_attr_range(&task) {
+            if let Ok((tail, (attr, range))) = filter_parser::attr_and_range(&task) {
                 needle = tail.trim();
                 filter = Some((attr, range));
             }
-            log::debug!("filter is {filter:?}");
+            log::info!("filter is {filter:?}");
             let matched = tasks
                 .find(needle, true, filter.is_some())
                 .into_iter()

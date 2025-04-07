@@ -6,7 +6,7 @@ use nom::IResult;
 use nom::Parser;
 use nom::branch::alt;
 use nom::bytes::complete::{tag, take_while1};
-use nom::character::complete::{digit1, multispace0, multispace1, space1};
+use nom::character::complete::{digit1, multispace0, multispace1, space0, space1};
 use nom::combinator::{map, map_res, opt};
 use nom::multi::many_m_n;
 use nom::sequence::{pair, preceded};
@@ -27,7 +27,7 @@ fn alpha1_utf8(input: &str) -> IResult<&str, &str> {
     take_while1(|c: char| c.is_alphabetic()).parse(input)
 }
 
-fn parse_date(input: &str) -> IResult<&str, NaiveDate> {
+fn iso_date(input: &str) -> IResult<&str, NaiveDate> {
     map_res(
         take_while1(|x: char| x.is_ascii_digit() || x == '-'),
         |x: &str| NaiveDate::parse_from_str(x, "%Y-%m-%d"),
@@ -35,7 +35,7 @@ fn parse_date(input: &str) -> IResult<&str, NaiveDate> {
     .parse(input)
 }
 
-fn parse_ru_date(input: &str) -> IResult<&str, NaiveDate> {
+fn cis_date(input: &str) -> IResult<&str, NaiveDate> {
     map_res(
         take_while1(|x: char| x.is_ascii_digit() || x == '.'),
         |x: &str| {
@@ -65,14 +65,14 @@ fn parse_today(input: &str) -> IResult<&str, NaiveDate> {
     .parse(input)
 }
 
-fn parse_yesterday(input: &str) -> IResult<&str, NaiveDate> {
+fn yesterday(input: &str) -> IResult<&str, NaiveDate> {
     map(tag("yesterday").or(tag("вчера")), |_| {
         today().pred_opt().unwrap()
     })
     .parse(input)
 }
 
-fn parse_tdby(input: &str) -> IResult<&str, NaiveDate> {
+fn tdby(input: &str) -> IResult<&str, NaiveDate> {
     map(tag("позавчера"), |_| {
         today().pred_opt().unwrap().pred_opt().unwrap()
     })
@@ -80,20 +80,22 @@ fn parse_tdby(input: &str) -> IResult<&str, NaiveDate> {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum TimeOffsetUnit {
+pub enum TimeUnit {
     Days,
     Weeks,
     Months,
     Years,
 }
 
-impl FromStr for TimeOffsetUnit {
+impl FromStr for TimeUnit {
     type Err = ();
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "days" | "day" | "день" | "дней" | "дня" => Ok(Self::Days),
-            "weeks" | "week" | "неделя" | "недели" | "недель" => Ok(Self::Weeks),
+            "weeks" | "week" | "неделя" | "недели" | "недель" | "неделю" => {
+                Ok(Self::Weeks)
+            }
             "months" | "month" | "месяцев" | "месяца" | "месяц" => {
                 Ok(Self::Months)
             }
@@ -106,45 +108,45 @@ impl FromStr for TimeOffsetUnit {
 #[derive(Debug, PartialEq, Eq)]
 pub struct TimeOffset {
     pub amount: u32,
-    pub unit: TimeOffsetUnit,
+    pub unit: TimeUnit,
 }
 
 impl TimeOffset {
     fn into_date(self) -> NaiveDate {
         let today_ = today();
         match self.unit {
-            TimeOffsetUnit::Days => today_ - chrono::TimeDelta::days(self.amount as i64),
-            TimeOffsetUnit::Weeks => today_ - chrono::TimeDelta::weeks(self.amount as i64),
-            TimeOffsetUnit::Months => today_
+            TimeUnit::Days => today_ - chrono::TimeDelta::days(self.amount as i64),
+            TimeUnit::Weeks => today_ - chrono::TimeDelta::weeks(self.amount as i64),
+            TimeUnit::Months => today_
                 .checked_sub_months(chrono::Months::new(self.amount))
                 .unwrap(),
-            TimeOffsetUnit::Years => today_
+            TimeUnit::Years => today_
                 .checked_sub_months(chrono::Months::new(self.amount * 12))
                 .unwrap(),
         }
     }
 }
 
-fn parse_number(input: &str) -> IResult<&str, u32> {
+fn number(input: &str) -> IResult<&str, u32> {
     map(digit1, |s: &str| u32::from_str(s).unwrap()).parse(input)
 }
 
-fn parse_unit(input: &str) -> IResult<&str, TimeOffsetUnit> {
-    map_res(alpha1_utf8, TimeOffsetUnit::from_str).parse(input)
+fn time_unit(input: &str) -> IResult<&str, TimeUnit> {
+    map_res(alpha1_utf8, TimeUnit::from_str).parse(input)
 }
 
-fn parse_suffix(input: &str) -> IResult<&str, ()> {
+fn time_suffix_en(input: &str) -> IResult<&str, ()> {
     let suffix = alt((tag("ago"), tag("before"), tag("назад")));
     map(preceded(space1, suffix), |_| ()).parse(input)
 }
 
 pub fn parse_offset(input: &str) -> IResult<&str, NaiveDate> {
     let with_number = map(
-        (parse_number, space1, parse_unit, opt(parse_suffix)),
+        (number, space1, time_unit, opt(time_suffix_en)),
         |(amount, _, unit, _)| TimeOffset { amount, unit },
     );
 
-    let without_number = map(pair(parse_unit, parse_suffix), |(unit, _)| TimeOffset {
+    let without_number = map(pair(time_unit, time_suffix_en), |(unit, _)| TimeOffset {
         amount: 1,
         unit,
     });
@@ -152,13 +154,13 @@ pub fn parse_offset(input: &str) -> IResult<&str, NaiveDate> {
     map(alt((with_number, without_number)), TimeOffset::into_date).parse(input)
 }
 
-fn parse_date_or_label(input: &str) -> IResult<&str, NaiveDate> {
+fn parse_date(input: &str) -> IResult<&str, NaiveDate> {
     alt((
         parse_today,
-        parse_yesterday,
-        parse_tdby,
-        parse_ru_date,
-        parse_date,
+        yesterday,
+        tdby,
+        cis_date,
+        iso_date,
         parse_offset,
     ))
     .parse(input)
@@ -182,7 +184,7 @@ impl FromStr for Attr {
     }
 }
 
-fn parse_attr(input: &str) -> IResult<&str, Attr> {
+fn attr(input: &str) -> IResult<&str, Attr> {
     map_res(alpha1_utf8, Attr::from_str).parse(input)
 }
 
@@ -208,17 +210,16 @@ impl TryFrom<(&str, NaiveDate)> for Boundary {
     }
 }
 
-fn parse_boundary(input: &str) -> IResult<&str, Boundary> {
-    map_res(
-        (alpha1_utf8, multispace1, parse_date_or_label),
-        |(tag, _, date)| Boundary::try_from((tag, date)),
-    )
+fn boundary(input: &str) -> IResult<&str, Boundary> {
+    map_res((alpha1_utf8, multispace1, parse_date), |(tag, _, date)| {
+        Boundary::try_from((tag, date))
+    })
     .parse(input)
 }
 
-fn parse_range(input: &str) -> IResult<&str, (Option<NaiveDate>, Option<NaiveDate>)> {
+fn date_range(input: &str) -> IResult<&str, (Option<NaiveDate>, Option<NaiveDate>)> {
     map_res(
-        many_m_n(1, 2, preceded(multispace0, parse_boundary)),
+        many_m_n(1, 2, preceded(multispace0, boundary)),
         |x| match x.as_slice() {
             [Boundary::From(dt)] => Ok((Some(*dt), None)),
             [Boundary::To(dt)] => Ok((None, Some(*dt))),
@@ -230,15 +231,63 @@ fn parse_range(input: &str) -> IResult<&str, (Option<NaiveDate>, Option<NaiveDat
     .parse(input)
 }
 
-fn parse_just_date(input: &str) -> IResult<&str, (Option<NaiveDate>, Option<NaiveDate>)> {
-    map(parse_date_or_label, |x| (Some(x), Some(x))).parse(input)
+fn last_something_en(input: &str) -> IResult<&str, (Option<NaiveDate>, Option<NaiveDate>)> {
+    map_res(
+        (tag("last"), space0, opt(number), space0, time_unit),
+        |(_, _, num, _, unit)| {
+            let amount = num.unwrap_or(1);
+            let start = TimeOffset { amount, unit }.into_date();
+            Ok::<_, ()>((Some(start), Some(today())))
+        },
+    )
+    .parse(input)
 }
 
-pub fn parse_attr_range(input: &str) -> IResult<&str, (Attr, RangeInclusive<NaiveDate>)> {
+fn last_something_ru(input: &str) -> IResult<&str, (Option<NaiveDate>, Option<NaiveDate>)> {
+    map_res(
+        (
+            opt(tag("за")),
+            space0,
+            opt(number),
+            space0,
+            alt((
+                tag("прошлый"),
+                tag("прошлых"),
+                tag("прошлая"),
+                tag("прошлую"),
+                tag("последних"),
+                tag("последний"),
+                tag("последнюю"),
+            )),
+            space1,
+            time_unit,
+        ),
+        |(_, _, num, _, _, _, unit)| {
+            let amount = num.unwrap_or(1);
+            let start = TimeOffset { amount, unit }.into_date();
+            Ok::<_, ()>((Some(start), Some(today())))
+        },
+    )
+    .parse(input)
+}
+
+fn one_day_range(input: &str) -> IResult<&str, (Option<NaiveDate>, Option<NaiveDate>)> {
+    map(parse_date, |x| (Some(x), Some(x))).parse(input)
+}
+
+pub fn attr_and_range(input: &str) -> IResult<&str, (Attr, RangeInclusive<NaiveDate>)> {
     map(
         (
-            preceded(multispace0, parse_attr),
-            preceded(multispace1, alt((parse_range, parse_just_date))),
+            preceded(multispace0, attr),
+            preceded(
+                multispace1,
+                alt((
+                    date_range,
+                    one_day_range,
+                    last_something_ru,
+                    last_something_en,
+                )),
+            ),
         ),
         |(attr, (lower, upper))| {
             (
@@ -260,6 +309,30 @@ mod tests {
             (
                 "updated today",
                 (Attr::Updated, ("2025-05-04", "2025-05-04")),
+            ),
+            (
+                "updated last week",
+                (Attr::Updated, ("2025-04-27", "2025-05-04")),
+            ),
+            (
+                "updated last 7 days",
+                (Attr::Updated, ("2025-04-27", "2025-05-04")),
+            ),
+            (
+                "updated last 17 years",
+                (Attr::Updated, ("2008-05-04", "2025-05-04")),
+            ),
+            (
+                "обновлено за последнюю неделю",
+                (Attr::Updated, ("2025-04-27", "2025-05-04")),
+            ),
+            (
+                "обновлено за 3 последних недели",
+                (Attr::Updated, ("2025-04-13", "2025-05-04")),
+            ),
+            (
+                "обновлено за последний год",
+                (Attr::Updated, ("2024-05-04", "2025-05-04")),
             ),
             (
                 "updated after 1 year ago before now",
@@ -306,22 +379,24 @@ mod tests {
             };
             let expected_range = from_dt..=to_dt;
 
-            let (tail, (attr, range)) = parse_attr_range(input).unwrap();
-            assert!(tail.is_empty());
-            assert_eq!(attr, expected_attr);
-            assert_eq!(range, expected_range);
+            let result = attr_and_range(input);
+            assert!(result.is_ok(), "case '{input}' failed: {:?}", result.err());
+            let (tail, (attr, range)) = result.unwrap();
+            assert!(tail.is_empty(), "case '{input}' failed");
+            assert_eq!(attr, expected_attr, "case '{input}' failed");
+            assert_eq!(range, expected_range, "case '{input}' failed");
         }
     }
 
     #[test]
     fn test_parse_ru_date() {
         assert_eq!(
-            parse_ru_date("02.03").map(|(x, y)| (x, y.to_string())),
+            cis_date("02.03").map(|(x, y)| (x, y.to_string())),
             Ok(("", "2025-03-02".to_string()))
         );
 
         assert_eq!(
-            parse_ru_date("31.03.2021").map(|(x, y)| (x, y.to_string())),
+            cis_date("31.03.2021").map(|(x, y)| (x, y.to_string())),
             Ok(("", "2021-03-31".to_string()))
         );
     }
