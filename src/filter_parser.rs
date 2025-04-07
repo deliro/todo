@@ -244,7 +244,7 @@ fn last_something_en(input: &str) -> IResult<&str, (Option<NaiveDate>, Option<Na
 }
 
 fn last_something_ru(input: &str) -> IResult<&str, (Option<NaiveDate>, Option<NaiveDate>)> {
-    map_res(
+    map(
         (
             opt(tag("за")),
             space0,
@@ -265,7 +265,7 @@ fn last_something_ru(input: &str) -> IResult<&str, (Option<NaiveDate>, Option<Na
         |(_, _, num, _, _, _, unit)| {
             let amount = num.unwrap_or(1);
             let start = TimeOffset { amount, unit }.into_date();
-            Ok::<_, ()>((Some(start), Some(today())))
+            (Some(start), Some(today()))
         },
     )
     .parse(input)
@@ -275,28 +275,21 @@ fn one_day_range(input: &str) -> IResult<&str, (Option<NaiveDate>, Option<NaiveD
     map(parse_date, |x| (Some(x), Some(x))).parse(input)
 }
 
-pub fn attr_and_range(input: &str) -> IResult<&str, (Attr, RangeInclusive<NaiveDate>)> {
+fn any_range(input: &str) -> IResult<&str, RangeInclusive<NaiveDate>> {
     map(
-        (
-            preceded(multispace0, attr),
-            preceded(
-                multispace1,
-                alt((
-                    date_range,
-                    one_day_range,
-                    last_something_ru,
-                    last_something_en,
-                )),
-            ),
-        ),
-        |(attr, (lower, upper))| {
-            (
-                attr,
-                lower.unwrap_or(NaiveDate::MIN)..=upper.unwrap_or(NaiveDate::MAX),
-            )
-        },
+        alt((
+            date_range,
+            one_day_range,
+            last_something_ru,
+            last_something_en,
+        )),
+        |(lower, upper)| lower.unwrap_or(NaiveDate::MIN)..=upper.unwrap_or(NaiveDate::MAX),
     )
     .parse(input)
+}
+
+pub fn attr_and_range(input: &str) -> IResult<&str, (Attr, RangeInclusive<NaiveDate>)> {
+    (attr, preceded(multispace1, any_range)).parse(input)
 }
 
 #[cfg(test)]
@@ -304,71 +297,40 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_ok_parse_attr_range() {
+    fn test_parse_attr_range() {
+        let (tail, (attr, _)) = attr_and_range("created from 2023-06-07 to 2023-07-08").unwrap();
+        assert_eq!(tail, "");
+        assert_eq!(attr, Attr::Created);
+    }
+
+    #[test]
+    fn test_any_range() {
         let cases = [
+            ("today", ("2025-05-04", "2025-05-04")),
+            ("last week", ("2025-04-27", "2025-05-04")),
+            ("last 7 days", ("2025-04-27", "2025-05-04")),
+            ("last 17 years", ("2008-05-04", "2025-05-04")),
+            ("за 17 прошлых лет", ("2008-05-04", "2025-05-04")),
+            ("за последнюю неделю", ("2025-04-27", "2025-05-04")),
+            ("за 3 последних недели", ("2025-04-13", "2025-05-04")),
+            ("за последний год", ("2024-05-04", "2025-05-04")),
+            ("after 1 year ago before now", ("2024-05-04", "2025-05-04")),
+            ("before yesterday", ("MIN", "2025-05-03")),
+            ("after 3 weeks ago", ("2025-04-13", "MAX")),
             (
-                "updated today",
-                (Attr::Updated, ("2025-05-04", "2025-05-04")),
+                "from 2023-06-07 to 2023-07-08",
+                ("2023-06-07", "2023-07-08"),
             ),
             (
-                "updated last week",
-                (Attr::Updated, ("2025-04-27", "2025-05-04")),
+                "after 3 months before before yesterday",
+                ("2025-02-04", "2025-05-03"),
             ),
-            (
-                "updated last 7 days",
-                (Attr::Updated, ("2025-04-27", "2025-05-04")),
-            ),
-            (
-                "updated last 17 years",
-                (Attr::Updated, ("2008-05-04", "2025-05-04")),
-            ),
-            (
-                "обновлено за последнюю неделю",
-                (Attr::Updated, ("2025-04-27", "2025-05-04")),
-            ),
-            (
-                "обновлено за 3 последних недели",
-                (Attr::Updated, ("2025-04-13", "2025-05-04")),
-            ),
-            (
-                "обновлено за последний год",
-                (Attr::Updated, ("2024-05-04", "2025-05-04")),
-            ),
-            (
-                "updated after 1 year ago before now",
-                (Attr::Updated, ("2024-05-04", "2025-05-04")),
-            ),
-            (
-                "created  before yesterday",
-                (Attr::Created, ("MIN", "2025-05-03")),
-            ),
-            (
-                "created  after 3 weeks ago",
-                (Attr::Created, ("2025-04-13", "MAX")),
-            ),
-            (
-                "created from 2023-06-07 to 2023-07-08",
-                (Attr::Created, ("2023-06-07", "2023-07-08")),
-            ),
-            (
-                "created after 3 months before before yesterday",
-                (Attr::Created, ("2025-02-04", "2025-05-03")),
-            ),
-            (
-                "обновлено со вчера до сегодня",
-                (Attr::Updated, ("2025-05-03", "2025-05-04")),
-            ),
-            (
-                "обновлено с 3 дня назад до позавчера",
-                (Attr::Updated, ("2025-05-01", "2025-05-02")),
-            ),
-            (
-                "обновлено с 02.03.2022 по 31.08",
-                (Attr::Updated, ("2022-03-02", "2025-08-31")),
-            ),
+            ("со вчера до сегодня", ("2025-05-03", "2025-05-04")),
+            ("с 3 дня назад до позавчера", ("2025-05-01", "2025-05-02")),
+            ("с 02.03.2022 по 31.08", ("2022-03-02", "2025-08-31")),
         ];
 
-        for (input, (expected_attr, (from, to))) in cases {
+        for (input, (from, to)) in cases {
             let from_dt = match from {
                 "MIN" => NaiveDate::MIN,
                 v => NaiveDate::from_str(v).unwrap(),
@@ -379,11 +341,10 @@ mod tests {
             };
             let expected_range = from_dt..=to_dt;
 
-            let result = attr_and_range(input);
+            let result = any_range(input);
             assert!(result.is_ok(), "case '{input}' failed: {:?}", result.err());
-            let (tail, (attr, range)) = result.unwrap();
+            let (tail, range) = result.unwrap();
             assert!(tail.is_empty(), "case '{input}' failed");
-            assert_eq!(attr, expected_attr, "case '{input}' failed");
             assert_eq!(range, expected_range, "case '{input}' failed");
         }
     }
