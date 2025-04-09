@@ -18,7 +18,6 @@ use std::process::Command as Cmd;
 use std::str::FromStr;
 use std::{env, fmt, fs, io};
 use strsim::jaro_winkler;
-use tempfile::NamedTempFile;
 
 static TRANSLIT_MAP: Lazy<HashMap<char, char>> = Lazy::new(|| {
     const ENG: &str = "qwertyuiop[]asdfghjkl;'zxcvbnm,./";
@@ -62,7 +61,7 @@ enum Multiline {
 fn read_multiline(initial: &str) -> io::Result<Multiline> {
     Ok(match (atty::is(Stream::Stdin), get_editor()) {
         (true, Some(editor)) => Multiline::Full({
-            let mut tmp_file = NamedTempFile::new()?;
+            let mut tmp_file = tempfile::Builder::new().suffix(".md").tempfile()?;
             write!(tmp_file, "{}", initial)?;
             let path = tmp_file.path();
             Cmd::new(editor).arg(path).status()?;
@@ -224,23 +223,20 @@ impl Task {
         writeln!(buf, "Title: {}", self.title)?;
         writeln!(buf, "ID: {}", self.id)?;
         writeln!(buf, "Status: {}", self.status)?;
-        if !self.comments.is_empty() {
-            writeln!(buf, "----- comments -----")?;
-            for comment in self.comments.lines() {
-                writeln!(buf, "{comment}")?;
-            }
-            writeln!(buf, "--------------------")?;
-        }
         writeln!(
             buf,
             "created at: {:?}",
             self.created_at.with_timezone(&Local)
         )?;
-        write!(
+        writeln!(
             buf,
             "updated at: {:?}",
             self.updated_at.with_timezone(&Local)
         )?;
+        if !self.comments.is_empty() {
+            writeln!(buf, "{}", termimad::term_text("------------------------"))?;
+            writeln!(buf, "{}", termimad::term_text(&self.comments))?;
+        }
         Ok(buf)
     }
 
