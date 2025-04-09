@@ -143,6 +143,8 @@ enum Command {
     /// Add a comment to a task
     #[clap(visible_alias = "c")]
     Comment { task: Vec<String> },
+    /// Create new task in `done` status
+    Log { task: Vec<String> },
     /// Physically remove all tasks in `drop` status
     RemoveDropped,
     /// Soft-delete all done tasks (set `drop` status)
@@ -406,14 +408,14 @@ impl Tasks {
         Loc::new(next_idx, next_id)
     }
 
-    fn todo(&mut self, title: String, comments: String) -> Loc {
+    fn add(&mut self, title: String, status: Status) -> Loc {
         let loc = self.next_loc();
         debug_assert_eq!(loc.idx, self.inner.len().into());
         let task = Task {
             id: loc.id,
             title,
-            comments,
-            status: Status::Todo,
+            comments: String::new(),
+            status,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
@@ -704,14 +706,6 @@ fn main() -> io::Result<()> {
 
             tasks.save()?;
         }
-        Some(Command::External(args)) => {
-            let mut tasks = Tasks::load_default()?;
-            let title = args.join(" ");
-            let loc = tasks.todo(title, String::new());
-            tasks.save()?;
-            let task = tasks.find_idx(loc.idx).unwrap();
-            println!("Task has been created: {task}");
-        }
         Some(Command::Find { task }) => {
             let tasks = Tasks::load_default()?;
             let task = task.join(" ").to_lowercase();
@@ -814,11 +808,22 @@ fn main() -> io::Result<()> {
                 tasks.save()?
             }
         }
+        Some(Command::External(task)) => add_task(task.join(" "), Status::Todo)?,
+        Some(Command::Log { task }) => add_task(task.join(" "), Status::Done)?,
         None => {
             let tasks = Tasks::load_default()?;
             print_only_status_tasks(tasks.iter(), &[Status::Todo])
         }
     }
+    Ok(())
+}
+
+fn add_task(title: String, status: Status) -> io::Result<()> {
+    let mut tasks = Tasks::load_default()?;
+    let loc = tasks.add(title, status);
+    tasks.save()?;
+    let task = tasks.find_idx(loc.idx).unwrap();
+    println!("Task has been created: {task}");
     Ok(())
 }
 
