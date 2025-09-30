@@ -583,10 +583,10 @@ impl Candidate {
     fn check(needle: &str, task: &Task) -> Option<Self> {
         debug_assert_eq!(needle, needle.trim().to_lowercase());
         log::debug!("checking needle '{needle}' against task {task}");
-        if let Ok(id) = needle.parse::<usize>() {
-            if task.id == id {
-                return Some(Candidate::ById);
-            }
+        if let Ok(id) = needle.parse::<usize>()
+            && task.id == id
+        {
+            return Some(Candidate::ById);
         }
 
         let needle_words = needle.split_whitespace().collect::<Vec<_>>();
